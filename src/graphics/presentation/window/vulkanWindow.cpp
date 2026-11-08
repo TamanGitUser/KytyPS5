@@ -447,7 +447,7 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	physical_device.getFeatures2(&supported2);
 	graphics.device_fault_enabled = device_fault_extension && device_fault.deviceFault == VK_TRUE;
 	Log::WriteToConsoleAndLog(fmt::format(
-	    "Vulkan device-fault reporting: {}\\n",
+	    "Vulkan device-fault reporting: {}\n",
 	    graphics.device_fault_enabled ? "enabled" : "unavailable"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
 	if (!barycentric_supported) {
