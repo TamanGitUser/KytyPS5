@@ -406,8 +406,8 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	vk::PhysicalDeviceFaultFeaturesEXT device_fault {};
 	if (device_fault_extension) {
 		// Put this optional feature into the query chain only when its extension is present.
-		device_fault.pNext = supported.pNext;
-		supported.pNext = &device_fault;
+		device_fault.pNext = supported2.pNext;
+		supported2.pNext = &device_fault;
 	}
 	add(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
 	const bool extended_dynamic_state = add(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
@@ -610,7 +610,8 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    barycentric,
 	    vk::PhysicalDeviceMeshShaderFeaturesEXT {.taskShader = VK_TRUE, .meshShader = VK_TRUE},
 	    feedback_layout, feedback_dynamic, provoking_vertex, image_atomic_int64, maintenance8,
-	    shader_clock, conditional_rendering, device_fault,
+	    shader_clock, conditional_rendering,
+	    vk::PhysicalDeviceFaultFeaturesEXT {.deviceFault = graphics.device_fault_enabled},
 	    // The renderer only uses the Vulkan 1.3 core dynamic states, but RADV (Mesa 26.3) creates
 	    // its PS epilog cache only when this EXT feature is enabled and crashes in vkCmdDraw when
 	    // a depth- or stencil-writing fragment shader needs an epilog.
