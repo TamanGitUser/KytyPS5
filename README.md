@@ -2,7 +2,7 @@
 
 **GTX (Maxwell)** is an independent, community-maintained fork of [KytyPS5](https://github.com/KytyPS5/KytyPS5), focused on compatibility and stability work for NVIDIA Maxwell-class GPUs. The underlying emulator remains KytyPS5; this fork is not an official upstream release and is not affiliated with NVIDIA, Sony Interactive Entertainment, or PlayStation.
 
-This fork preserves the upstream project’s GPL-2.0-only licensing and the original Kyty MIT notice. It does not include games, PS5 firmware, BIOS/keys, PKG files, or other proprietary Sony content. Use only software and game data you are legally entitled to use. See [FORK-NOTICE.md](FORK-NOTICE.md) for the fork’s modifications and distribution notes.
+Fork-specific changes in this repository are dated 2026-11-08; see the commit history and [FORK-NOTICE.md](FORK-NOTICE.md). This fork preserves the upstream project’s GPL-2.0-only licensing and the original Kyty MIT notice. It does not include games, PS5 firmware, BIOS/keys, PKG files, or other proprietary Sony content. Use only software and game data you are legally entitled to use. See [FORK-NOTICE.md](FORK-NOTICE.md) for the fork’s modifications and distribution notes.
 
 **Release focus:** Windows x64 and Linux x86-64. This fork does not publish macOS builds.
 
