@@ -28,7 +28,7 @@ void MasterSemaphore::Refresh() {
 	const auto result  = m_graphics.device.getSemaphoreCounterValue(m_semaphore, &counter);
 	if (result != vk::Result::eSuccess) {
 		DeviceLossReport(m_graphics, result);
-		EXIT_NOT_IMPLEMENTED(true);
+		EXIT("vkGetSemaphoreCounterValue failed: %s\\n", vk::to_string(result).c_str());
 	}
 
 	auto known = m_gpu_tick.load(std::memory_order_acquire);
@@ -57,7 +57,8 @@ void MasterSemaphore::Wait(uint64_t tick) {
 	const auto result = m_graphics.device.waitSemaphores(&wait_info, UINT64_MAX);
 	if (result != vk::Result::eSuccess) {
 		DeviceLossReport(m_graphics, result);
-		EXIT_NOT_IMPLEMENTED(true);
+		EXIT("vkWaitSemaphores failed: %s, tick=%llu\\n",
+		     vk::to_string(result).c_str(), static_cast<unsigned long long>(tick));
 	}
 	Refresh();
 }
