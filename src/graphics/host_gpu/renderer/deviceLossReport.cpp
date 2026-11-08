@@ -39,6 +39,7 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "vkGetDeviceFaultInfoEXT (counts) failed: {}\n", vk::to_string(fault_result)));
 		return;
+		Log::Flush();
 	}
 
 	const auto address_total = counts.addressInfoCount;
@@ -59,12 +60,17 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "vkGetDeviceFaultInfoEXT (details) failed: {}\n", vk::to_string(fault_result)));
 		return;
+		Log::Flush();
 	}
 
 	Log::WriteToConsoleAndLog(fmt::format(
 	    "VK_EXT_device_fault: \"{}\"; {} address record(s), {} vendor record(s)\n",
 	    info.description.data(), address_total, vendor_total));
-	for (uint32_t i = 0; i < counts.addressInfoCount; ++i) {
+	const auto address_count =
+	    std::min(counts.addressInfoCount, static_cast<uint32_t>(addresses.size()));
+	const auto vendor_count =
+	    std::min(counts.vendorInfoCount, static_cast<uint32_t>(vendors.size()));
+	for (uint32_t i = 0; i < address_count; ++i) {
 		const auto& address = addresses[i];
 		const auto  precision = std::max<vk::DeviceSize>(address.addressPrecision, 1);
 		const auto  begin = address.reportedAddress & ~(precision - 1);
@@ -73,7 +79,7 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 		    i, vk::to_string(address.addressType), address.reportedAddress, precision, begin,
 		    begin + precision));
 	}
-	for (uint32_t i = 0; i < counts.vendorInfoCount; ++i) {
+	for (uint32_t i = 0; i < vendor_count; ++i) {
 		const auto& vendor = vendors[i];
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "  vendor[{}]: {} code=0x{:016x} data=0x{:016x}\n", i,
