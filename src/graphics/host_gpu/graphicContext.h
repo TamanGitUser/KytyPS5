@@ -30,6 +30,8 @@ struct GraphicContext {
 	VmaAllocator                       allocator                             = nullptr;
 	bool                               memory_budget_ext_enabled             = false;
 	bool                               device_fault_enabled                  = false;
+	bool                               device_fault_vendor_binary_enabled    = false;
+	bool                               diagnostics_config_enabled             = false;
 	bool                               compute_subgroup_size_control_enabled = false;
 	bool                               shader_image_int64_atomics_enabled    = false;
 	bool                               attachment_feedback_loop_enabled      = false;

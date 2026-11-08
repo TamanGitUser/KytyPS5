@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <fmt/format.h>
 #include <mutex>
+#include <vector>
 
 namespace Libs::Graphics {
 
@@ -36,37 +38,59 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 
 	vk::DeviceFaultCountsEXT counts {};
 	auto fault_result = graphics.device.getFaultInfoEXT(&counts, nullptr);
-	if (fault_result != vk::Result::eSuccess) {
+	if (fault_result != vk::Result::eSuccess && fault_result != vk::Result::eIncomplete) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "vkGetDeviceFaultInfoEXT (counts) failed: {}\n", vk::to_string(fault_result)));
-		return;
 		Log::Flush();
+		return;
 	}
 
 	const auto address_total = counts.addressInfoCount;
 	const auto vendor_total  = counts.vendorInfoCount;
-	// Keep the diagnostic allocation bounded: the first records are sufficient to identify
-	// common instruction-pointer and access-fault patterns, and this path runs after a GPU loss.
+	const auto binary_total  = counts.vendorBinarySize;
+	// Bound driver-controlled allocations while retaining complete ordinary crash payloads.
+	constexpr size_t MaxVendorBinaryBytes = 64u * 1024u * 1024u;
+	const bool binary_too_large = binary_total > MaxVendorBinaryBytes;
+	std::vector<uint8_t> vendor_binary;
+	if (!binary_too_large) {
+		vendor_binary.resize(binary_total);
+	}
 	std::array<vk::DeviceFaultAddressInfoEXT, 8> addresses {};
 	std::array<vk::DeviceFaultVendorInfoEXT, 8> vendors {};
 	counts.addressInfoCount = std::min(address_total, static_cast<uint32_t>(addresses.size()));
 	counts.vendorInfoCount  = std::min(vendor_total, static_cast<uint32_t>(vendors.size()));
-	counts.vendorBinarySize = 0;
+	counts.vendorBinarySize = vendor_binary.size();
 
 	vk::DeviceFaultInfoEXT info {};
 	info.pAddressInfos = addresses.data();
 	info.pVendorInfos  = vendors.data();
-	fault_result       = graphics.device.getFaultInfoEXT(&counts, &info);
+	info.pVendorBinaryData = vendor_binary.empty() ? nullptr : vendor_binary.data();
+	fault_result = graphics.device.getFaultInfoEXT(&counts, &info);
 	if (fault_result != vk::Result::eSuccess && fault_result != vk::Result::eIncomplete) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "vkGetDeviceFaultInfoEXT (details) failed: {}\n", vk::to_string(fault_result)));
-		return;
 		Log::Flush();
+		return;
 	}
 
+	const auto binary_size = std::min(vendor_binary.size(), counts.vendorBinarySize);
 	Log::WriteToConsoleAndLog(fmt::format(
-	    "VK_EXT_device_fault: \"{}\"; {} address record(s), {} vendor record(s)\n",
-	    info.description.data(), address_total, vendor_total));
+	    "VK_EXT_device_fault: \"{}\"; {} address record(s), {} vendor record(s), "
+	    "{} vendor-binary byte(s){}\n",
+	    info.description.data(), address_total, vendor_total, binary_size,
+	    binary_too_large ? " (driver-reported binary exceeded 64 MiB; skipped)" : ""));
+	if (binary_size != 0) {
+		if (auto* file = std::fopen("_device_fault.nv-gpudmp", "wb"); file != nullptr) {
+			const auto written = std::fwrite(vendor_binary.data(), 1, binary_size, file);
+			std::fclose(file);
+			Log::WriteToConsoleAndLog(fmt::format(
+			    "  vendor crash data written to _device_fault.nv-gpudmp ({} / {} bytes)\n",
+			    written, binary_size));
+		} else {
+			Log::WriteToConsoleAndLog(
+			    "  could not create _device_fault.nv-gpudmp in the current directory\n");
+		}
+	}
 	const auto address_count =
 	    std::min(counts.addressInfoCount, static_cast<uint32_t>(addresses.size()));
 	const auto vendor_count =
