@@ -56776,6 +56776,10 @@ int main(int argc, char **argv) {
     vulkan.CheckSamplerFilterMode();
     return 0;
   }
+  if (argc == 2 && std::strcmp(argv[1], "--depth-texture-encoding-only") == 0) {
+    CheckDepthTextureEncoding();
+    return 0;
+  }
   if (argc == 2 && std::strcmp(argv[1], "--sampled-depth-resource-only") == 0) {
     VulkanHarness vulkan;
     CheckSampledDepthResource();
