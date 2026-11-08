@@ -443,6 +443,50 @@ struct DrawCallInfo {
 	[[nodiscard]] const char* Name() const { return indexed ? "DrawIndex" : "DrawIndexAuto"; }
 };
 
+// Keep the render area inside the host image that backs each guest render target. Aliased
+// transient targets can retain guest dimensions larger than the allocation currently in cache;
+// on some drivers that mismatch can turn a draw into a GPU timeout/device loss.
+static vk::Extent2D ClampToBacking(const Image& image, uint32_t base_level, vk::Extent2D extent,
+                                  uint64_t address, const char* kind) {
+	vk::Extent2D backing {std::max(image.info.extent.width >> base_level, 1u),
+	                      std::max(image.info.extent.height >> base_level, 1u)};
+	if (image.backing.image != nullptr) {
+		backing.width  = std::min(backing.width, std::max(image.backing.extent.width >> base_level, 1u));
+		backing.height = std::min(backing.height, std::max(image.backing.extent.height >> base_level, 1u));
+	}
+	if (backing.width >= extent.width && backing.height >= extent.height) {
+		return extent;
+	}
+	static std::atomic<uint32_t> reports {0};
+	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
+		Log::WriteToConsoleAndLog(fmt::format(
+		    "Render target: {} 0x{:016x} is {}x{} but its image is {}x{} (level {}); "
+		    "render area bounded to the image\\n",
+		    kind, address, extent.width, extent.height, backing.width, backing.height, base_level));
+	}
+	return {std::min(extent.width, backing.width), std::min(extent.height, backing.height)};
+}
+
+static uint32_t ClampLayersToBacking(const Image& image, uint32_t base_layer, uint32_t layer_count,
+                                     uint64_t address, const char* kind) {
+	if (image.backing.image == nullptr) {
+		return layer_count;
+	}
+	const uint32_t available =
+	    image.backing.layers > base_layer ? image.backing.layers - base_layer : 1u;
+	if (layer_count <= available) {
+		return layer_count;
+	}
+	static std::atomic<uint32_t> reports {0};
+	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
+		Log::WriteToConsoleAndLog(fmt::format(
+		    "Render target: {} 0x{:016x} renders {} layers from layer {} but its image has {}; "
+		    "layers bounded to the image\\n",
+		    kind, address, layer_count, base_layer, image.backing.layers));
+	}
+	return available;
+}
+
 RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderColorInfo* colors,
                                                  uint32_t color_count, RenderDepthInfo& depth,
                                                  vk::ImageAspectFlags& feedback_aspects,
@@ -471,10 +515,13 @@ RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderCo
 		              ImageSubresourceRange {view.base_level, view.level_count, view.base_layer,
 		                                     view.layer_count},
 		              buffer.Handle());
-		const auto extent       = target.Extent();
+		const auto extent = ClampToBacking(image, view.base_level, target.Extent(),
+		                                   target.desc.info.data.address, "color");
 		state.width             = std::min(state.width, extent.width);
 		state.height            = std::min(state.height, extent.height);
-		state.num_layers        = std::min(state.num_layers, view.layer_count);
+		state.num_layers        = std::min(state.num_layers,
+		                                   ClampLayersToBacking(image, view.base_layer, view.layer_count,
+		                                                        target.desc.info.data.address, "color"));
 		state.num_color_attachments = std::max(state.num_color_attachments, target.target_slot + 1);
 		auto& attachment            = state.color_attachments[target.target_slot];
 		attachment.image_view   = image_view;
@@ -534,9 +581,15 @@ RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderCo
 		              ImageSubresourceRange {view.base_level, view.level_count, view.base_layer,
 		                                     view.layer_count},
 		              buffer.Handle());
-		state.width               = std::min(state.width, depth.desc.info.extent.width);
-		state.height              = std::min(state.height, depth.desc.info.extent.height);
-		state.num_layers          = std::min(state.num_layers, view.layer_count);
+		const auto depth_extent =
+		    ClampToBacking(image, view.base_level,
+		                   {depth.desc.info.extent.width, depth.desc.info.extent.height},
+		                   depth.desc.info.data.address, "depth");
+		state.width  = std::min(state.width, depth_extent.width);
+		state.height = std::min(state.height, depth_extent.height);
+		state.num_layers          = std::min(state.num_layers,
+		                                     ClampLayersToBacking(image, view.base_layer, view.layer_count,
+		                                                          depth.desc.info.data.address, "depth"));
 		const auto aspects        = ImageViewOps::DepthAspectMask(depth.desc.view_info.format);
 		auto&      attachment     = state.depth_stencil_attachment;
 		attachment.image_view     = image_view;
