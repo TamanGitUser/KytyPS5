@@ -1,5 +1,5 @@
-# GTX (Maxwell) fork release workflow; modified 2026-11-08. See FORK-NOTICE.md.
-name: Build and Release GTX (Maxwell)
+# GTX (MAXWELL) of KytyPS5 fork release workflow; modified 2026-11-08. See FORK-NOTICE.md.
+name: Build and Release GTX (MAXWELL) of KytyPS5
 
 on:
   workflow_dispatch:
@@ -32,13 +32,13 @@ jobs:
           if [[ "$GITHUB_REPOSITORY" == "TamanGitUser/KytyPS5" &&
                 "$GITHUB_REF" == refs/tags/gtx-maxwell-* ]]; then
             version="${GITHUB_REF_NAME#gtx-maxwell-}"
-            echo "value=GTX-Maxwell-${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "value=GTX-MAXWELL-of-KytyPS5-${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           else
-            echo "value=GTX-Maxwell-dev-$(date -u +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "value=GTX-MAXWELL-of-KytyPS5-dev-$(date -u +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
   windows:
-    name: Build GTX (Maxwell) (Windows)
+    name: Build GTX (MAXWELL) of KytyPS5 (Windows)
     needs: metadata
     runs-on: windows-2025
 
@@ -152,12 +152,12 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GTX-Maxwell-Windows-x64
+          name: GTX-MAXWELL-of-KytyPS5-Windows-x64
           path: _Build/windows/install/**
           if-no-files-found: error
 
   linux:
-    name: Build GTX (Maxwell) (Linux)
+    name: Build GTX (MAXWELL) of KytyPS5 (Linux)
     needs: metadata
     runs-on: ubuntu-24.04
 
@@ -306,12 +306,12 @@ jobs:
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GTX-Maxwell-Linux-x86_64
+          name: GTX-MAXWELL-of-KytyPS5-Linux-x86_64
           path: _Build/linux/install/**
           if-no-files-found: error
 
   release:
-    name: Release GTX (Maxwell)
+    name: Release GTX (MAXWELL) of KytyPS5
     if: >-
       always() &&
       github.event_name == 'push' &&
@@ -351,21 +351,21 @@ jobs:
         if: needs.windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: GTX-Maxwell-Windows-x64
-          path: artifacts/GTX-Maxwell-Windows-x64
+          name: GTX-MAXWELL-of-KytyPS5-Windows-x64
+          path: artifacts/GTX-MAXWELL-of-KytyPS5-Windows-x64
 
       - name: Download Linux build
         if: needs.linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: GTX-Maxwell-Linux-x86_64
-          path: artifacts/GTX-Maxwell-Linux-x86_64
+          name: GTX-MAXWELL-of-KytyPS5-Linux-x86_64
+          path: artifacts/GTX-MAXWELL-of-KytyPS5-Linux-x86_64
 
       - name: Package Windows build
         if: needs.windows.result == 'success'
         shell: bash
         run: |
-          windows_dir="artifacts/GTX-Maxwell-Windows-x64"
+          windows_dir="artifacts/GTX-MAXWELL-of-KytyPS5-Windows-x64"
           test -d "$windows_dir"
           (
             cd "$windows_dir"
@@ -376,7 +376,7 @@ jobs:
         if: needs.linux.result == 'success'
         shell: bash
         run: |
-          linux_dir="artifacts/GTX-Maxwell-Linux-x86_64"
+          linux_dir="artifacts/GTX-MAXWELL-of-KytyPS5-Linux-x86_64"
           test -d "$linux_dir"
           chmod a+x \
             "$linux_dir/kyty_launcher" \
@@ -412,5 +412,5 @@ jobs:
             gh release create "$RELEASE_NAME" "${assets[@]}" "${release_flags[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "GTX (Maxwell) ${RELEASE_NAME#GTX-Maxwell-}"
+              --title "GTX (MAXWELL) of KytyPS5 ${RELEASE_NAME#GTX-MAXWELL-of-KytyPS5-}"
           fi

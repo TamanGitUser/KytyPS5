@@ -1,10 +1,10 @@
-# GTX (Maxwell) fork — provenance and distribution notice
+# GTX (MAXWELL) of KytyPS5 — provenance and distribution notice
 
 Last updated: 2026-11-08
 
 ## Project identity
 
-GTX (Maxwell) is an independent community fork of [KytyPS5](https://github.com/KytyPS5/KytyPS5). It is not an official KytyPS5 release and is not affiliated with NVIDIA, Sony Interactive Entertainment, or PlayStation. “GTX” and “Maxwell” are used only to describe the intended GPU compatibility focus.
+GTX (MAXWELL) of KytyPS5 is an independent community fork of [KytyPS5](https://github.com/KytyPS5/KytyPS5). It is not an official KytyPS5 release and is not affiliated with NVIDIA, Sony Interactive Entertainment, or PlayStation. “GTX” and “Maxwell” are used only to describe the intended GPU compatibility focus.
 
 Upstream source and project history remain credited to their respective authors. This fork does not claim ownership of upstream code.
 
@@ -25,7 +25,7 @@ Use only game data and system software that you are legally entitled to use. The
 
 ## Releases
 
-The fork's release workflow targets Windows x64 and Linux x86-64. It does not publish macOS builds. Releases use the **GTX (Maxwell)** product label and a `gtx-maxwell-<version>` tag. The source archive must correspond to the exact commit used to build the binaries.
+The fork's release workflow targets Windows x64 and Linux x86-64. It does not publish macOS builds. Releases use the **GTX (MAXWELL)** product label and a `gtx-maxwell-<version>` tag. The source archive must correspond to the exact commit used to build the binaries.
 
 ## No warranty
 
