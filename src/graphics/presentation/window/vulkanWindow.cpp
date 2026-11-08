@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #include "common/assert.h"
 #include "common/common.h"
 #include "common/emulatorConfig.h"
