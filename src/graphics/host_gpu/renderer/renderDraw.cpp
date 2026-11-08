@@ -461,7 +461,7 @@ static vk::Extent2D ClampToBacking(const Image& image, uint32_t base_level, vk::
 	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "Render target: {} 0x{:016x} is {}x{} but its image is {}x{} (level {}); "
-		    "render area bounded to the image\\n",
+		    "render area bounded to the image\n",
 		    kind, address, extent.width, extent.height, backing.width, backing.height, base_level));
 	}
 	return {std::min(extent.width, backing.width), std::min(extent.height, backing.height)};
@@ -481,7 +481,7 @@ static uint32_t ClampLayersToBacking(const Image& image, uint32_t base_layer, ui
 	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
 		Log::WriteToConsoleAndLog(fmt::format(
 		    "Render target: {} 0x{:016x} renders {} layers from layer {} but its image has {}; "
-		    "layers bounded to the image\\n",
+		    "layers bounded to the image\n",
 		    kind, address, layer_count, base_layer, image.backing.layers));
 	}
 	return available;
