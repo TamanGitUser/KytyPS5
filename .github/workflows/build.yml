@@ -142,7 +142,7 @@ jobs:
           Copy-Item LICENSES -Destination _Build/windows/install -Recurse -Force
           $thirdPartyRoot = (Resolve-Path 3rdparty).Path
           $licenseFiles = Get-ChildItem $thirdPartyRoot -Recurse -File |
-            Where-Object { $_.Name -match '^(LICENSE|COPYING|NOTICE)(\\..*)?
+            Where-Object { $_.Name -match '^(LICENSE|COPYING|NOTICE)(\..*)?
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -234,7 +234,7 @@ jobs:
         run: |
           status=0
           for feature in SDL_ALSA SDL_PULSEAUDIO SDL_WAYLAND SDL_X11 SDL_LIBUDEV SDL_DBUS; do
-            if grep -qE "^--   ${feature} +\\(Wanted: ON\\): ON" _Build/configure.log; then
+            if grep -qE "^--   ${feature} +\(Wanted: ON\): ON" _Build/configure.log; then
               echo "ok   ${feature}"
             else
               echo "FAIL ${feature} is not enabled"
@@ -266,7 +266,7 @@ jobs:
           cp LICENSE FORK-NOTICE.md _Build/linux/install/
           cp -R LICENSES _Build/linux/install/
           mkdir -p _Build/linux/install/THIRD-PARTY-LICENSES
-          find 3rdparty -type f \\( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \\) -print0 |
+          find 3rdparty -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print0 |
             while IFS= read -r -d '' file; do
               relative="${file#3rdparty/}"
               destination="_Build/linux/install/THIRD-PARTY-LICENSES/$relative"
@@ -507,7 +507,7 @@ jobs:
         run: |
           status=0
           for feature in SDL_ALSA SDL_PULSEAUDIO SDL_WAYLAND SDL_X11 SDL_LIBUDEV SDL_DBUS; do
-            if grep -qE "^--   ${feature} +\\(Wanted: ON\\): ON" _Build/configure.log; then
+            if grep -qE "^--   ${feature} +\(Wanted: ON\): ON" _Build/configure.log; then
               echo "ok   ${feature}"
             else
               echo "FAIL ${feature} is not enabled"
