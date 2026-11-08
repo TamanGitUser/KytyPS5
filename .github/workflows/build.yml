@@ -140,6 +140,14 @@ jobs:
           cmake --install _Build/windows --prefix _Build/windows/install
           Copy-Item LICENSE, FORK-NOTICE.md -Destination _Build/windows/install
           Copy-Item LICENSES -Destination _Build/windows/install -Recurse -Force
+          $thirdPartyRoot = (Resolve-Path "3rdparty").Path
+          $licenseFiles = Get-ChildItem -Path $thirdPartyRoot -Recurse -File -Include "LICENSE*","COPYING*","NOTICE*"
+          foreach ($licenseFile in $licenseFiles) {
+            $relative = $licenseFile.FullName.Substring($thirdPartyRoot.Length).TrimStart('\')
+            $destination = Join-Path "_Build/windows/install/THIRD-PARTY-LICENSES" $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+            Copy-Item $licenseFile.FullName $destination -Force
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -262,6 +270,14 @@ jobs:
           cmake --install _Build/linux --prefix _Build/linux/install
           cp LICENSE FORK-NOTICE.md _Build/linux/install/
           cp -R LICENSES _Build/linux/install/
+          mkdir -p _Build/linux/install/THIRD-PARTY-LICENSES
+          find 3rdparty -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print0 |
+            while IFS= read -r -d '' file; do
+              relative="${file#3rdparty/}"
+              destination="_Build/linux/install/THIRD-PARTY-LICENSES/$relative"
+              mkdir -p "$(dirname "$destination")"
+              cp "$file" "$destination"
+            done
 
       - name: Verify artifacts
         shell: bash
