@@ -47,8 +47,8 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 	// common instruction-pointer and access-fault patterns, and this path runs after a GPU loss.
 	std::array<vk::DeviceFaultAddressInfoEXT, 8> addresses {};
 	std::array<vk::DeviceFaultVendorInfoEXT, 8> vendors {};
-	counts.addressInfoCount = std::min<uint32_t>(address_total, addresses.size());
-	counts.vendorInfoCount  = std::min<uint32_t>(vendor_total, vendors.size());
+	counts.addressInfoCount = std::min(address_total, static_cast<uint32_t>(addresses.size()));
+	counts.vendorInfoCount  = std::min(vendor_total, static_cast<uint32_t>(vendors.size()));
 	counts.vendorBinarySize = 0;
 
 	vk::DeviceFaultInfoEXT info {};
