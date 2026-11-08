@@ -1,3 +1,4 @@
+# GTX (Maxwell) fork changes: modified 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 cmake_minimum_required(VERSION 3.19...4.3)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
