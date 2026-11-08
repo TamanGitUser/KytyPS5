@@ -539,8 +539,11 @@ jobs:
               --clobber \
               --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_NAME" "${assets[@]}" \
-              --generate-notes \
+            release_flags=(--generate-notes)
+            if [[ "$GITHUB_REPOSITORY" == "TamanGitUser/KytyPS5" ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_NAME" "${assets[@]}" "${release_flags[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$RELEASE_NAME"
