@@ -402,6 +402,13 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	       feedback_layout, feedback_dynamic, provoking_vertex, maintenance8, shader_clock,
 	       image_atomic_int64, conditional_rendering, barycentric] = supported;
 	graphics.memory_budget_ext_enabled = add(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+	const bool device_fault_extension = add(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+	vk::PhysicalDeviceFaultFeaturesEXT device_fault {};
+	if (device_fault_extension) {
+		// Put this optional feature into the query chain only when its extension is present.
+		device_fault.pNext = supported.pNext;
+		supported.pNext = &device_fault;
+	}
 	add(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
 	const bool extended_dynamic_state = add(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
 	if (!add(VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME)) {
@@ -438,6 +445,10 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	}
 	Vr::OpenXrAppendExtensions(device_extensions, available_extensions, true);
 	physical_device.getFeatures2(&supported2);
+	graphics.device_fault_enabled = device_fault_extension && device_fault.deviceFault == VK_TRUE;
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Vulkan device-fault reporting: {}\\n",
+	    graphics.device_fault_enabled ? "enabled" : "unavailable"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
 	if (!barycentric_supported) {
 		Log::WriteToConsoleAndLog(
@@ -599,7 +610,7 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    barycentric,
 	    vk::PhysicalDeviceMeshShaderFeaturesEXT {.taskShader = VK_TRUE, .meshShader = VK_TRUE},
 	    feedback_layout, feedback_dynamic, provoking_vertex, image_atomic_int64, maintenance8,
-	    shader_clock, conditional_rendering,
+	    shader_clock, conditional_rendering, device_fault,
 	    // The renderer only uses the Vulkan 1.3 core dynamic states, but RADV (Mesa 26.3) creates
 	    // its PS epilog cache only when this EXT feature is enabled and crashes in vkCmdDraw when
 	    // a depth- or stencil-writing fragment shader needs an epilog.
@@ -633,6 +644,9 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	}
 	if (!graphics.conditional_rendering_enabled) {
 		create.unlink<vk::PhysicalDeviceConditionalRenderingFeaturesEXT>();
+	}
+	if (!graphics.device_fault_enabled) {
+		create.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
 	}
 	if (!extended_dynamic_state) {
 		create.unlink<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
