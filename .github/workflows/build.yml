@@ -1,3 +1,4 @@
+# GTX (Maxwell) fork release workflow; modified 2026-11-08. See FORK-NOTICE.md.
 name: Build and Release GTX (Maxwell)
 
 on:
