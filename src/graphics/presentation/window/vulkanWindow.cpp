@@ -611,7 +611,8 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    vk::PhysicalDeviceMeshShaderFeaturesEXT {.taskShader = VK_TRUE, .meshShader = VK_TRUE},
 	    feedback_layout, feedback_dynamic, provoking_vertex, image_atomic_int64, maintenance8,
 	    shader_clock, conditional_rendering,
-	    vk::PhysicalDeviceFaultFeaturesEXT {.deviceFault = graphics.device_fault_enabled},
+	    vk::PhysicalDeviceFaultFeaturesEXT {
+	        .deviceFault = graphics.device_fault_enabled, .deviceFaultVendorBinary = VK_FALSE},
 	    // The renderer only uses the Vulkan 1.3 core dynamic states, but RADV (Mesa 26.3) creates
 	    // its PS epilog cache only when this EXT feature is enabled and crashes in vkCmdDraw when
 	    // a depth- or stencil-writing fragment shader needs an epilog.
