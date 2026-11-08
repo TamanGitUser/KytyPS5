@@ -138,6 +138,8 @@ jobs:
         shell: cmd
         run: |
           cmake --install _Build/windows --prefix _Build/windows/install
+          Copy-Item LICENSE, FORK-NOTICE.md -Destination _Build/windows/install
+          Copy-Item LICENSES -Destination _Build/windows/install -Recurse -Force
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -258,6 +260,8 @@ jobs:
         shell: bash
         run: |
           cmake --install _Build/linux --prefix _Build/linux/install
+          cp LICENSE FORK-NOTICE.md _Build/linux/install/
+          cp -R LICENSES _Build/linux/install/
 
       - name: Verify artifacts
         shell: bash
@@ -317,6 +321,16 @@ jobs:
       RELEASE_NAME: ${{ needs.metadata.outputs.release_tag }}
 
     steps:
+      - name: Checkout exact release source (including submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Package complete corresponding source
+        shell: bash
+        run: |
+          tar --exclude='.git' -czf "$GITHUB_WORKSPACE/$RELEASE_NAME-Source.tar.gz" .
+
       - name: Download Windows build
         if: needs.windows.result == 'success'
         uses: actions/download-artifact@v4
@@ -363,7 +377,8 @@ jobs:
           assets=()
           for artifact in \
             "$RELEASE_NAME-Windows-x64.zip" \
-            "$RELEASE_NAME-Linux-x86_64.tar.gz"; do
+            "$RELEASE_NAME-Linux-x86_64.tar.gz" \
+            "$RELEASE_NAME-Source.tar.gz"; do
             if [[ -f "$artifact" ]]; then
               assets+=("$artifact")
             fi
