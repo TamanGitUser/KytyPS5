@@ -6,18 +6,30 @@
 #include <algorithm>
 #include <array>
 #include <fmt/format.h>
+#include <mutex>
 
 namespace Libs::Graphics {
+
+namespace {
+std::mutex g_device_loss_report_mutex;
+bool       g_device_loss_reported = false;
+} // namespace
 
 void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 	if (result != vk::Result::eErrorDeviceLost) {
 		return;
 	}
+	std::scoped_lock lock(g_device_loss_report_mutex);
+	if (g_device_loss_reported) {
+		return;
+	}
+	g_device_loss_reported = true;
 
 	Log::WriteToConsoleAndLog("--- Vulkan device-loss report ---\n");
 	if (!graphics.device_fault_enabled) {
 		Log::WriteToConsoleAndLog(
 		    "VK_EXT_device_fault is unavailable; no vendor fault records can be queried.\n");
+		Log::Flush();
 		return;
 	}
 
