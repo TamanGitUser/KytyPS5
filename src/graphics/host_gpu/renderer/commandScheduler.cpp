@@ -300,12 +300,8 @@ CommandBuffer& CommandScheduler::BeginCommand() {
 	EXIT_IF(!m_command.IsInvalid());
 	m_command.m_buffer = m_command_pool.Commit();
 	m_command.Begin();
-	if (m_graphics.device_diagnostic_checkpoints_enabled &&
-	    VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV != nullptr) {
-		VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV(
-		    static_cast<VkCommandBuffer>(m_command.m_buffer),
-		    kKytyCheckpointCommandBufferBegin);
-	}
+	SetDiagnosticCheckpoint(m_graphics, m_command.m_buffer,
+	                        DiagnosticCheckpointKind::CommandBufferBegin);
 	m_dynamic_state.Invalidate();
 	return m_command;
 }
@@ -315,12 +311,8 @@ uint64_t CommandScheduler::Submit(SubmitInfo submit) {
 
 	auto& graphics = m_graphics;
 	EXIT_IF(graphics.queue == nullptr);
-	if (graphics.device_diagnostic_checkpoints_enabled &&
-	    VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV != nullptr) {
-		VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV(
-		    static_cast<VkCommandBuffer>(m_command.m_buffer),
-		    kKytyCheckpointCommandBufferSubmit);
-	}
+	SetDiagnosticCheckpoint(graphics, m_command.m_buffer,
+	                        DiagnosticCheckpointKind::CommandBufferBeforeSubmit);
 	m_command.End();
 	const auto buffer = m_command.m_buffer;
 

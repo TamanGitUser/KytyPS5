@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <fmt/format.h>
 #include <mutex>
@@ -13,12 +15,63 @@
 
 namespace Libs::Graphics {
 
-const char kKytyCheckpointCommandBufferBegin[]  = "Kyty: command buffer begin";
-const char kKytyCheckpointCommandBufferSubmit[] = "Kyty: command buffer before submit";
-
 namespace {
+constexpr uint32_t MaxDiagnosticCheckpointMarkers = 65536;
+
+struct DiagnosticCheckpointRecord {
+	uint64_t                  sequence = 0;
+	uint64_t                  primary  = 0;
+	uint64_t                  auxiliary = 0;
+	DiagnosticCheckpointKind  kind = DiagnosticCheckpointKind::CommandBufferBegin;
+	uint32_t                  x = 0;
+	uint32_t                  y = 0;
+	uint32_t                  z = 0;
+};
+
+std::array<DiagnosticCheckpointRecord, MaxDiagnosticCheckpointMarkers> g_checkpoint_markers {};
+std::atomic<uint32_t> g_checkpoint_marker_count {0};
+
 std::mutex g_device_loss_report_mutex;
 bool       g_device_loss_reported = false;
+
+const char* CheckpointKindName(DiagnosticCheckpointKind kind) {
+	switch (kind) {
+	case DiagnosticCheckpointKind::CommandBufferBegin: return "command buffer begin";
+	case DiagnosticCheckpointKind::CommandBufferBeforeSubmit: return "command buffer before submit";
+	case DiagnosticCheckpointKind::ComputeDispatchBegin: return "compute dispatch begin";
+	case DiagnosticCheckpointKind::ComputeDispatchEnd: return "compute dispatch end";
+	case DiagnosticCheckpointKind::ComputeDispatchIndirectBegin: return "indirect compute dispatch begin";
+	case DiagnosticCheckpointKind::ComputeDispatchIndirectEnd: return "indirect compute dispatch end";
+	case DiagnosticCheckpointKind::GraphicsDrawBegin: return "graphics draw begin";
+	case DiagnosticCheckpointKind::GraphicsDrawEnd: return "graphics draw end";
+	case DiagnosticCheckpointKind::PssrDispatchBegin: return "PSSR dispatch begin";
+	case DiagnosticCheckpointKind::PssrDispatchEnd: return "PSSR dispatch end";
+	}
+	return "unknown Kyty checkpoint";
+}
+
+bool FindCheckpointRecord(const void* marker, const DiagnosticCheckpointRecord*& record) {
+	if (marker == nullptr) {
+		return false;
+	}
+	const auto address = reinterpret_cast<uintptr_t>(marker);
+	const auto begin = reinterpret_cast<uintptr_t>(g_checkpoint_markers.data());
+	const auto end = begin + sizeof(g_checkpoint_markers);
+	if (address < begin || address >= end) {
+		return false;
+	}
+	const auto offset = address - begin;
+	if (offset % sizeof(DiagnosticCheckpointRecord) != 0) {
+		return false;
+	}
+	const auto index = static_cast<uint32_t>(offset / sizeof(DiagnosticCheckpointRecord));
+	if (index >= std::min(g_checkpoint_marker_count.load(std::memory_order_acquire),
+	                      MaxDiagnosticCheckpointMarkers)) {
+		return false;
+	}
+	record = &g_checkpoint_markers[index];
+	return true;
+}
 
 void ReportDiagnosticCheckpoints(GraphicContext& graphics) {
 	if (!graphics.device_diagnostic_checkpoints_enabled) {
@@ -61,19 +114,52 @@ void ReportDiagnosticCheckpoints(GraphicContext& graphics) {
 	for (uint32_t i = 0; i < checkpoint_count; ++i) {
 		const auto& checkpoint = checkpoints[i];
 		const auto  marker = checkpoint.pCheckpointMarker;
-		const char* marker_name = "driver/automatic or unknown marker";
-		if (marker == kKytyCheckpointCommandBufferBegin) {
-			marker_name = "Kyty command buffer begin";
-		} else if (marker == kKytyCheckpointCommandBufferSubmit) {
-			marker_name = "Kyty command buffer before submit";
-		}
+		const DiagnosticCheckpointRecord* record = nullptr;
+		const bool known = FindCheckpointRecord(marker, record);
 		Log::WriteToConsoleAndLog(fmt::format(
-		    "  checkpoint[{}]: stage={} marker=0x{:016x} ({})\n", i,
-		    vk::to_string(static_cast<vk::PipelineStageFlagBits>(checkpoint.stage)),
-		    static_cast<uint64_t>(reinterpret_cast<uintptr_t>(marker)), marker_name));
+		    "  checkpoint[{}]: stage={} marker=0x{:016x} ({})"
+		    " sequence={} primary=0x{:016x} auxiliary=0x{:016x} work={}x{}x{}\n",
+		    i, vk::to_string(static_cast<vk::PipelineStageFlagBits>(checkpoint.stage)),
+		    static_cast<uint64_t>(reinterpret_cast<uintptr_t>(marker)),
+		    known ? CheckpointKindName(record->kind) : "driver/unknown marker",
+		    known ? record->sequence : 0,
+		    known ? record->primary : 0,
+		    known ? record->auxiliary : 0,
+		    known ? record->x : 0, known ? record->y : 0, known ? record->z : 0));
 	}
+	const auto total_markers =
+	    std::min(g_checkpoint_marker_count.load(std::memory_order_acquire),
+	             MaxDiagnosticCheckpointMarkers);
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Kyty diagnostic markers recorded: {}{}\n", total_markers,
+	    total_markers == MaxDiagnosticCheckpointMarkers ? " (capacity reached)" : ""));
 }
 } // namespace
+
+void SetDiagnosticCheckpoint(GraphicContext& graphics, vk::CommandBuffer command_buffer,
+                             DiagnosticCheckpointKind kind, uint64_t primary,
+                             uint64_t auxiliary, uint32_t x, uint32_t y, uint32_t z) {
+	if (!graphics.device_diagnostic_checkpoints_enabled || command_buffer == nullptr) {
+		return;
+	}
+	const auto set_checkpoint = VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV;
+	if (set_checkpoint == nullptr) {
+		return;
+	}
+	const auto index = g_checkpoint_marker_count.fetch_add(1, std::memory_order_relaxed);
+	if (index >= MaxDiagnosticCheckpointMarkers) {
+		return;
+	}
+	auto& record = g_checkpoint_markers[index];
+	record.sequence = static_cast<uint64_t>(index) + 1;
+	record.primary  = primary;
+	record.auxiliary = auxiliary;
+	record.kind = kind;
+	record.x = x;
+	record.y = y;
+	record.z = z;
+	set_checkpoint(static_cast<VkCommandBuffer>(command_buffer), &record);
+}
 
 void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 	if (result != vk::Result::eErrorDeviceLost) {

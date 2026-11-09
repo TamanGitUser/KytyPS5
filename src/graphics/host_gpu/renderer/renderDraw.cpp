@@ -20,6 +20,7 @@
 #include "graphics/host_gpu/renderer/depthRenderTarget.h"
 #include "graphics/host_gpu/renderer/pipeline/pipelineCache.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vulkanCommon.h"
@@ -1260,6 +1261,13 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
 	auto&         occlusion_queries = m_context.GetOcclusionQueries();
 	const int32_t occlusion_query   = occlusion_queries.Begin(vk_buffer);
+	const auto vertex_shader_hash = state.vertex_info[0].stage.module->info.shader_hash;
+	const auto pixel_shader_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::GraphicsDrawBegin,
+	                        vertex_shader_hash, pixel_shader_hash, draw.index_count,
+	                        draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()));
 	if (mesh_task) {
 		vk_buffer.drawMeshTasksEXT(emit.indirect.count, 1, 1);
 	} else if (mesh_active) {
@@ -1273,6 +1281,10 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 		vk_buffer.drawIndirect(args_buffer.first->Handle(), args_buffer.second,
 		                       emit.indirect.count, emit.indirect.stride);
 	}
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::GraphicsDrawEnd,
+	                        vertex_shader_hash, pixel_shader_hash, draw.index_count,
+	                        draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()));
 	occlusion_queries.End(vk_buffer, occlusion_query);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::Draws);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::DrawInstances, draw.instance_count);
