@@ -89,7 +89,22 @@ jobs:
           cache: true
 
       - name: Setup sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        continue-on-error: true
+
+      - name: Select compiler cache
+        shell: pwsh
+        run: |
+          $launcher = ""
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            $launcher = "sccache"
+            Write-Host "sccache is available; using the compiler cache."
+          } else {
+            Write-Host "sccache is unavailable; continuing without the optional compiler cache."
+          }
+          "KYTY_COMPILER_LAUNCHER=$launcher" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Download FFmpeg prebuilts
         id: ffmpeg
@@ -159,8 +174,8 @@ jobs:
             -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" ^
             -DCMAKE_C_COMPILER=clang-cl ^
             -DCMAKE_CXX_COMPILER=clang-cl ^
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_C_COMPILER_LAUNCHER=%KYTY_COMPILER_LAUNCHER% ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=%KYTY_COMPILER_LAUNCHER% ^
             -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
 
       - name: Build
@@ -249,7 +264,22 @@ jobs:
           cache: true
 
       - name: Setup sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        continue-on-error: true
+
+      - name: Select compiler cache
+        shell: pwsh
+        run: |
+          $launcher = ""
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            $launcher = "sccache"
+            Write-Host "sccache is available; using the compiler cache."
+          } else {
+            Write-Host "sccache is unavailable; continuing without the optional compiler cache."
+          }
+          "KYTY_COMPILER_LAUNCHER=$launcher" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Download FFmpeg prebuilts
         id: ffmpeg
@@ -309,8 +339,8 @@ jobs:
             -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_C_COMPILER_LAUNCHER="$KYTY_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$KYTY_COMPILER_LAUNCHER" \
             -DCMAKE_PREFIX_PATH="$Qt6_DIR" 2>&1 | tee _Build/configure.log
           exit "${PIPESTATUS[0]}"
 
