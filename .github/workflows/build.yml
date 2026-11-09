@@ -1,4 +1,4 @@
-# GTX (MAXWELL) of KytyPS5 fork release workflow; modified 2026-11-08. See FORK-NOTICE.md.
+# GTX (MAXWELL) of KytyPS5 fork release workflow; modified 2026-11-09. See FORK-NOTICE.md.
 name: Build and Release GTX (MAXWELL) of KytyPS5
 
 on:
@@ -91,6 +91,51 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
 
+      - name: Download FFmpeg prebuilts
+        id: ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ffmpegCommit = (git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not determine the pinned FFmpeg commit."
+          }
+
+          $assetName = "ffmpeg-windows-x64.zip"
+          $url = "https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/$ffmpegCommit/$assetName"
+          $externalDirectory = Join-Path $PWD.Path "_Build/externals"
+          $ffmpegDirectory = Join-Path $externalDirectory "ffmpeg-$ffmpegCommit"
+          $archivePath = Join-Path $externalDirectory $assetName
+          New-Item -ItemType Directory -Force -Path $externalDirectory | Out-Null
+
+          # Retry transient GitHub release/CDN failures instead of relying on CMake's
+          # single-attempt file(DOWNLOAD).
+          & curl.exe --fail --show-error --location --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 300 --output $archivePath $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not download pinned FFmpeg package: $url"
+          }
+
+          if (Test-Path $ffmpegDirectory) {
+            Remove-Item -LiteralPath $ffmpegDirectory -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $ffmpegDirectory -Force
+          foreach ($requiredFile in @(
+            "include/libavcodec/avcodec.h",
+            "lib/avcodec.lib",
+            "lib/avformat.lib",
+            "lib/avutil.lib",
+            "lib/avfilter.lib",
+            "lib/swscale.lib",
+            "lib/swresample.lib"
+          )) {
+            if (!(Test-Path (Join-Path $ffmpegDirectory $requiredFile))) {
+              throw "FFmpeg package is incomplete; missing $requiredFile"
+            }
+          }
+
+          "dir=$ffmpegDirectory" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Verify toolchain
         shell: cmd
         run: |
@@ -111,6 +156,7 @@ jobs:
             -DKYTY_BUILD_ORIGIN=%KYTY_BUILD_ORIGIN% ^
             -DKYTY_BUILD_REPOSITORY=%KYTY_BUILD_REPOSITORY% ^
             -DKYTY_RELEASE_TAG=${{ needs.metadata.outputs.release_tag }} ^
+            -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" ^
             -DCMAKE_C_COMPILER=clang-cl ^
             -DCMAKE_CXX_COMPILER=clang-cl ^
             -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
@@ -205,6 +251,39 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
 
+      - name: Download FFmpeg prebuilts
+        id: ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg_commit="$(git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD)"
+          asset_name="ffmpeg-linux-x64.zip"
+          url="https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/${ffmpeg_commit}/${asset_name}"
+          external_directory="$GITHUB_WORKSPACE/_Build/externals"
+          ffmpeg_directory="$external_directory/ffmpeg-${ffmpeg_commit}"
+          archive_path="$external_directory/${asset_name}"
+          mkdir -p "$external_directory"
+
+          # Retry transient GitHub release/CDN failures instead of relying on CMake's
+          # single-attempt file(DOWNLOAD).
+          curl --fail --show-error --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 30 --max-time 300 "$url" --output "$archive_path"
+          rm -rf "$ffmpeg_directory"
+          mkdir -p "$ffmpeg_directory"
+          unzip -q "$archive_path" -d "$ffmpeg_directory"
+
+          for required_file in \
+            include/libavcodec/avcodec.h \
+            lib/libavcodec.a lib/libavformat.a lib/libavutil.a \
+            lib/libavfilter.a lib/libswscale.a lib/libswresample.a; do
+            test -f "$ffmpeg_directory/$required_file" || {
+              echo "FFmpeg package is incomplete; missing $required_file" >&2
+              exit 1
+            }
+          done
+
+          echo "dir=$ffmpeg_directory" >> "$GITHUB_OUTPUT"
+
       - name: Verify toolchain
         shell: bash
         run: |
@@ -227,6 +306,7 @@ jobs:
             -DKYTY_BUILD_ORIGIN="$KYTY_BUILD_ORIGIN" \
             -DKYTY_BUILD_REPOSITORY="$KYTY_BUILD_REPOSITORY" \
             -DKYTY_RELEASE_TAG="${{ needs.metadata.outputs.release_tag }}" \
+            -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
