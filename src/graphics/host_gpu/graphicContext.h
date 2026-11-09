@@ -1,4 +1,4 @@
-// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #ifndef EMULATOR_INCLUDE_EMULATOR_GRAPHICS_GRAPHICCONTEXT_H_
 #define EMULATOR_INCLUDE_EMULATOR_GRAPHICS_GRAPHICCONTEXT_H_
 
@@ -32,6 +32,7 @@ struct GraphicContext {
 	bool                               device_fault_enabled                  = false;
 	bool                               device_fault_vendor_binary_enabled    = false;
 	bool                               diagnostics_config_enabled             = false;
+	bool                               device_diagnostic_checkpoints_enabled = false;
 	bool                               compute_subgroup_size_control_enabled = false;
 	bool                               shader_image_int64_atomics_enabled    = false;
 	bool                               attachment_feedback_loop_enabled      = false;

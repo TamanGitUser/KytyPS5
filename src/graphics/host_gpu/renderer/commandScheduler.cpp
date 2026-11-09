@@ -1,4 +1,4 @@
-// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 
 #include "common/assert.h"
@@ -300,6 +300,12 @@ CommandBuffer& CommandScheduler::BeginCommand() {
 	EXIT_IF(!m_command.IsInvalid());
 	m_command.m_buffer = m_command_pool.Commit();
 	m_command.Begin();
+	if (m_graphics.device_diagnostic_checkpoints_enabled &&
+	    VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV != nullptr) {
+		VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV(
+		    static_cast<VkCommandBuffer>(m_command.m_buffer),
+		    kKytyCheckpointCommandBufferBegin);
+	}
 	m_dynamic_state.Invalidate();
 	return m_command;
 }
@@ -307,10 +313,16 @@ CommandBuffer& CommandScheduler::BeginCommand() {
 uint64_t CommandScheduler::Submit(SubmitInfo submit) {
 	EXIT_IF(m_command.IsInvalid());
 
-	m_command.End();
-	const auto buffer   = m_command.m_buffer;
-	auto&      graphics = m_graphics;
+	auto& graphics = m_graphics;
 	EXIT_IF(graphics.queue == nullptr);
+	if (graphics.device_diagnostic_checkpoints_enabled &&
+	    VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV != nullptr) {
+		VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdSetCheckpointNV(
+		    static_cast<VkCommandBuffer>(m_command.m_buffer),
+		    kKytyCheckpointCommandBufferSubmit);
+	}
+	m_command.End();
+	const auto buffer = m_command.m_buffer;
 
 	vk::Result result;
 	uint64_t   tick;

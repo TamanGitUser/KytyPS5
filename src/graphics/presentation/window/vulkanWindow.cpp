@@ -1,4 +1,4 @@
-// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #include "common/assert.h"
 #include "common/common.h"
 #include "common/emulatorConfig.h"
@@ -411,6 +411,8 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    std::strcmp(fault_diagnostics_env, "0") != 0;
 	const bool diagnostics_config_extension =
 	    diagnostics_requested && add(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+	const bool diagnostic_checkpoints_extension =
+	    diagnostics_requested && add(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
 	vk::PhysicalDeviceDiagnosticsConfigFeaturesNV diagnostics_config_features {};
 	if (diagnostics_config_extension) {
 		// Query NVIDIA's optional resource/shader diagnostics only when explicitly requested.
@@ -465,11 +467,17 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    graphics.device_fault_enabled && device_fault.deviceFaultVendorBinary == VK_TRUE;
 	graphics.diagnostics_config_enabled =
 	    diagnostics_config_extension && diagnostics_config_features.diagnosticsConfig == VK_TRUE;
+	graphics.device_diagnostic_checkpoints_enabled = diagnostic_checkpoints_extension;
 	Log::WriteToConsoleAndLog(fmt::format(
-	    "Vulkan device-fault reporting: {} (vendor binary: {}, NVIDIA diagnostics: {})\n",
+	    "Vulkan device-fault reporting: {} (vendor binary: {}, NVIDIA diagnostics: {}, "
+	    "diagnostic checkpoints: {}, automatic checkpoints: {})\n",
 	    graphics.device_fault_enabled ? "enabled" : "unavailable",
 	    graphics.device_fault_vendor_binary_enabled ? "enabled" : "unavailable",
-	    graphics.diagnostics_config_enabled ? "enabled" : "unavailable"));
+	    graphics.diagnostics_config_enabled ? "enabled" : "unavailable",
+	    graphics.device_diagnostic_checkpoints_enabled ? "enabled" : "unavailable",
+	    graphics.diagnostics_config_enabled && graphics.device_diagnostic_checkpoints_enabled
+	        ? "enabled"
+	        : "unavailable"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
 	if (!barycentric_supported) {
 		Log::WriteToConsoleAndLog(
@@ -690,6 +698,10 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableShaderDebugInfo |
 		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableResourceTracking |
 		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableShaderErrorReporting;
+		if (graphics.device_diagnostic_checkpoints_enabled) {
+			diagnostics_config_create.flags |=
+			    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableAutomaticCheckpoints;
+		}
 		diagnostics_config_create.pNext = device_create_info.pNext;
 		device_create_info.pNext = &diagnostics_config_create;
 	}

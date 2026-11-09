@@ -1,4 +1,4 @@
-// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #ifndef EMULATOR_SRC_GRAPHICS_HOST_GPU_RENDERER_DEVICELOSSREPORT_H_
 #define EMULATOR_SRC_GRAPHICS_HOST_GPU_RENDERER_DEVICELOSSREPORT_H_
 
@@ -8,7 +8,12 @@ namespace Libs::Graphics {
 
 struct GraphicContext;
 
-// Prints optional VK_EXT_device_fault details after a device loss. No-op for other results.
+// Stable application-owned markers inserted into diagnostic command buffers.
+extern const char kKytyCheckpointCommandBufferBegin[];
+extern const char kKytyCheckpointCommandBufferSubmit[];
+
+// Prints optional Vulkan device-fault and checkpoint details after a device loss.
+// No-op for other results.
 void DeviceLossReport(GraphicContext& graphics, vk::Result result);
 
 } // namespace Libs::Graphics

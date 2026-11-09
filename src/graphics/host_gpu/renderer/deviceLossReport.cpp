@@ -1,4 +1,4 @@
-// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/deviceLossReport.h"
 
 #include "common/logging/log.h"
@@ -13,9 +13,66 @@
 
 namespace Libs::Graphics {
 
+const char kKytyCheckpointCommandBufferBegin[]  = "Kyty: command buffer begin";
+const char kKytyCheckpointCommandBufferSubmit[] = "Kyty: command buffer before submit";
+
 namespace {
 std::mutex g_device_loss_report_mutex;
 bool       g_device_loss_reported = false;
+
+void ReportDiagnosticCheckpoints(GraphicContext& graphics) {
+	if (!graphics.device_diagnostic_checkpoints_enabled) {
+		return;
+	}
+	if (graphics.queue == nullptr) {
+		Log::WriteToConsoleAndLog(
+		    "VK_NV_device_diagnostic_checkpoints is enabled, but the graphics queue is unavailable.\n");
+		return;
+	}
+	const auto get_checkpoints = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetQueueCheckpointDataNV;
+	if (get_checkpoints == nullptr) {
+		Log::WriteToConsoleAndLog(
+		    "VK_NV_device_diagnostic_checkpoints query function is unavailable.\n");
+		return;
+	}
+
+	const auto queue = static_cast<VkQueue>(graphics.queue);
+	uint32_t   total_count = 0;
+	get_checkpoints(queue, &total_count, nullptr);
+	if (total_count == 0) {
+		Log::WriteToConsoleAndLog(
+		    "VK_NV_device_diagnostic_checkpoints: the driver returned no checkpoint records.\n");
+		return;
+	}
+
+	constexpr uint32_t MaxCheckpointRecords = 128;
+	const auto         capacity = std::min(total_count, MaxCheckpointRecords);
+	std::array<VkCheckpointDataNV, MaxCheckpointRecords> checkpoints {};
+	for (uint32_t i = 0; i < capacity; ++i) {
+		checkpoints[i].sType = VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV;
+	}
+	uint32_t checkpoint_count = capacity;
+	get_checkpoints(queue, &checkpoint_count, checkpoints.data());
+	checkpoint_count = std::min(checkpoint_count, capacity);
+
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "VK_NV_device_diagnostic_checkpoints: {} record(s){}\n", checkpoint_count,
+	    total_count > capacity ? " (truncated to 128)" : ""));
+	for (uint32_t i = 0; i < checkpoint_count; ++i) {
+		const auto& checkpoint = checkpoints[i];
+		const auto  marker = checkpoint.pCheckpointMarker;
+		const char* marker_name = "driver/automatic or unknown marker";
+		if (marker == kKytyCheckpointCommandBufferBegin) {
+			marker_name = "Kyty command buffer begin";
+		} else if (marker == kKytyCheckpointCommandBufferSubmit) {
+			marker_name = "Kyty command buffer before submit";
+		}
+		Log::WriteToConsoleAndLog(fmt::format(
+		    "  checkpoint[{}]: stage={} marker=0x{:016x} ({})\n", i,
+		    vk::to_string(static_cast<vk::PipelineStageFlagBits>(checkpoint.stage)),
+		    static_cast<uint64_t>(reinterpret_cast<uintptr_t>(marker)), marker_name));
+	}
+}
 } // namespace
 
 void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
@@ -29,6 +86,7 @@ void DeviceLossReport(GraphicContext& graphics, vk::Result result) {
 	g_device_loss_reported = true;
 
 	Log::WriteToConsoleAndLog("--- Vulkan device-loss report ---\n");
+	ReportDiagnosticCheckpoints(graphics);
 	if (!graphics.device_fault_enabled) {
 		Log::WriteToConsoleAndLog(
 		    "VK_EXT_device_fault is unavailable; no vendor fault records can be queried.\n");
