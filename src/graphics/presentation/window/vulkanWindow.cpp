@@ -405,10 +405,14 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	       image_atomic_int64, conditional_rendering, barycentric] = supported;
 	graphics.memory_budget_ext_enabled = add(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 	const bool device_fault_extension = add(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+	// A non-empty environment value overrides the persistent launcher setting. "0" disables;
+	// any other non-empty value enables diagnostics for this process.
 	const auto* fault_diagnostics_env = std::getenv("KYTY_DEVICE_FAULT_DIAGNOSTICS");
-	const bool diagnostics_requested =
-	    fault_diagnostics_env != nullptr && fault_diagnostics_env[0] != '\0' &&
-	    std::strcmp(fault_diagnostics_env, "0") != 0;
+	const bool diagnostics_env_override =
+	    fault_diagnostics_env != nullptr && fault_diagnostics_env[0] != '\0';
+	const bool diagnostics_requested = diagnostics_env_override
+	                                       ? std::strcmp(fault_diagnostics_env, "0") != 0
+	                                       : Config::NvidiaGpuDiagnosticsEnabled();
 	const bool diagnostics_config_extension =
 	    diagnostics_requested && add(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
 	const bool diagnostic_checkpoints_extension =
@@ -468,16 +472,24 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	graphics.diagnostics_config_enabled =
 	    diagnostics_config_extension && diagnostics_config_features.diagnosticsConfig == VK_TRUE;
 	graphics.device_diagnostic_checkpoints_enabled = diagnostic_checkpoints_extension;
-	Log::WriteToConsoleAndLog(fmt::format(
-	    "Vulkan device-fault reporting: {} (vendor binary: {}, NVIDIA diagnostics: {}, "
-	    "diagnostic checkpoints: {}, automatic checkpoints: {})\n",
-	    graphics.device_fault_enabled ? "enabled" : "unavailable",
-	    graphics.device_fault_vendor_binary_enabled ? "enabled" : "unavailable",
-	    graphics.diagnostics_config_enabled ? "enabled" : "unavailable",
-	    graphics.device_diagnostic_checkpoints_enabled ? "enabled" : "unavailable",
+	const char* diagnostics_status =
+	    !diagnostics_requested ? "disabled by configuration" :
+	    graphics.diagnostics_config_enabled ? "enabled" : "not supported by driver";
+	const char* checkpoints_status =
+	    !diagnostics_requested ? "disabled by configuration" :
+	    graphics.device_diagnostic_checkpoints_enabled ? "enabled" : "not supported by driver";
+	const char* automatic_checkpoints_status =
 	    graphics.diagnostics_config_enabled && graphics.device_diagnostic_checkpoints_enabled
 	        ? "enabled"
-	        : "unavailable"));
+	        : "unavailable";
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Vulkan device-fault reporting: {} (vendor binary: {}, NVIDIA diagnostics: {}, "
+	    "diagnostic checkpoints: {}, automatic checkpoints: {}; request: {}, source: {})\n",
+	    graphics.device_fault_enabled ? "enabled" : "unavailable",
+	    graphics.device_fault_vendor_binary_enabled ? "enabled" : "unavailable",
+	    diagnostics_status, checkpoints_status, automatic_checkpoints_status,
+	    diagnostics_requested ? "enabled" : "disabled",
+	    diagnostics_env_override ? "environment override" : "saved setting"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
 	if (!barycentric_supported) {
 		Log::WriteToConsoleAndLog(
