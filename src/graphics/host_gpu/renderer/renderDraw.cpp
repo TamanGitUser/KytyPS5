@@ -1006,7 +1006,7 @@ static void LogDiagnosticShaderResources(const char* stage_name, const ShaderSta
 			const auto& descriptor = descriptors[i];
 			uint32_t words[8] = {};
 			const auto word_count = std::min<uint32_t>(
-			    descriptor.dword_count, static_cast<uint32_t>(std::size(words)));
+			    descriptor.dword_count, 8u);
 			for (uint32_t j = 0; j < word_count; j++) {
 				words[j] = descriptor.dwords[j];
 			}
@@ -1039,7 +1039,6 @@ static void LogDiagnosticDrawState(const CommandBuffer& buffer, const DrawCallIn
 	const auto  vertex_hash = vertex.stage.module->info.shader_hash;
 	const auto  pixel_hash =
 	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
-	const auto& registers = buffer.GetRegisters();
 	const auto& user_config = buffer.GetUserConfig();
 
 	LOGF("GPU diagnostic DrawSnapshot[%u]: frame=%d VS=0x%016" PRIx64
