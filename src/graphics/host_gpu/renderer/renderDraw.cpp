@@ -986,9 +986,136 @@ static void CommitIndexBuffer(vk::CommandBuffer vk_buffer, const PreparedIndexBu
 	vk_buffer.bindIndexBuffer(prepared.buffer, prepared.offset, prepared.type);
 }
 
+static std::atomic<uint32_t> g_diagnostic_draw_snapshot_count = 0;
+
+static void LogDiagnosticShaderResources(const char* stage_name, const ShaderStageRuntime& stage) {
+	if (stage.resources == nullptr) {
+		LOGF("GPU diagnostic %s resources: unavailable\n", stage_name);
+		return;
+	}
+
+	const auto& resources = *stage.resources;
+	LOGF("GPU diagnostic %s resources: buffers=%zu images=%zu samplers=%zu user_data_dwords=%zu\n",
+	     stage_name, resources.buffers.size(), resources.images.size(),
+	     resources.samplers.size(), resources.user_data.size());
+
+	const auto log_descriptors = [stage_name](const char* kind,
+	                                           const auto& descriptors) {
+		const auto count = std::min<size_t>(descriptors.size(), 32);
+		for (size_t i = 0; i < count; i++) {
+			const auto& descriptor = descriptors[i];
+			uint32_t words[8] = {};
+			const auto word_count = std::min<uint32_t>(
+			    descriptor.dword_count, static_cast<uint32_t>(std::size(words)));
+			for (uint32_t j = 0; j < word_count; j++) {
+				words[j] = descriptor.dwords[j];
+			}
+			LOGF("GPU diagnostic %s %s[%zu] dwords=%u data=%08" PRIx32 " %08" PRIx32
+			     " %08" PRIx32 " %08" PRIx32 " %08" PRIx32 " %08" PRIx32
+			     " %08" PRIx32 " %08" PRIx32 "\n",
+			     stage_name, kind, i, descriptor.dword_count, words[0], words[1], words[2],
+			     words[3], words[4], words[5], words[6], words[7]);
+		}
+		if (descriptors.size() > count) {
+			LOGF("GPU diagnostic %s %s: omitted %zu additional descriptor(s)\n",
+			     stage_name, kind, descriptors.size() - count);
+		}
+	};
+
+	log_descriptors("buffer", resources.buffers);
+	log_descriptors("image", resources.images);
+	log_descriptors("sampler", resources.samplers);
+}
+
+static void LogDiagnosticDrawState(const CommandBuffer& buffer, const DrawCallInfo& draw,
+	                               const DrawRenderState& state, uint32_t index_type_and_size,
+	                               const void* index_addr) {
+	const auto log_id = g_diagnostic_draw_snapshot_count.fetch_add(1, std::memory_order_relaxed);
+	if (log_id >= 8) {
+		return;
+	}
+
+	const auto& vertex = state.vertex_info[0];
+	const auto  vertex_hash = vertex.stage.module->info.shader_hash;
+	const auto  pixel_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	const auto& registers = buffer.GetRegisters();
+	const auto& user_config = buffer.GetUserConfig();
+
+	LOGF("GPU diagnostic DrawSnapshot[%u]: frame=%d VS=0x%016" PRIx64
+	     " PS=0x%016" PRIx64 " indexed=%s count=%u instances=%u index_type=0x%08" PRIx32
+	     " index_addr=0x%016" PRIx64 " primitive=%u topology=%s restart=%s "
+	     "color_count=%u mrt_mask=0x%08" PRIx32 "\n",
+	     log_id, buffer.GetContext().GetGpu().GetFrameNum(), vertex_hash, pixel_hash,
+	     draw.indexed ? "true" : "false", draw.index_count, draw.instance_count,
+	     index_type_and_size, reinterpret_cast<uint64_t>(index_addr),
+	     static_cast<uint32_t>(user_config.GetPrimType()), vk::to_string(state.topology).c_str(),
+	     state.primitive_restart_enable ? "true" : "false", state.color_count, state.mrt_mask);
+
+	const auto color_limit = std::min<uint32_t>(state.color_count, RENDER_COLOR_ATTACHMENTS_MAX);
+	for (uint32_t i = 0; i < color_limit; i++) {
+		const auto& color = state.color_info[i];
+		const auto extent = color.Extent();
+		LOGF("GPU diagnostic DrawSnapshot[%u]: color[%u] image=%s slot=%u "
+		     "guest_addr=0x%010" PRIx64 " guest_size=0x%016" PRIx64
+		     " extent=%ux%u format=%s mip=%u layer=%u\n",
+		     log_id, i, color.image_id ? "yes" : "no", color.target_slot,
+		     color.desc.info.data.address, color.desc.info.data.size, extent.width, extent.height,
+		     vk::to_string(color.desc.view_info.format).c_str(), color.guest_mip_level,
+		     color.guest_array_layer);
+	}
+
+	const auto& depth = state.depth_info;
+	LOGF("GPU diagnostic DrawSnapshot[%u]: depth image=%s guest_addr=0x%010" PRIx64
+	     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s "
+	     "test=%s write=%s compare=%s clear=%s stencil_test=%s stencil_clear=%s "
+	     "PS_depth_export=%s PS_early_z=%s PS_kill=%s target_shader_mask=0x%08" PRIx32 "\n",
+	     log_id, depth.image_id ? "yes" : "no", depth.desc.info.data.address,
+	     depth.desc.info.data.size, depth.desc.info.extent.width, depth.desc.info.extent.height,
+	     vk::to_string(depth.desc.view_info.format).c_str(),
+	     depth.depth_test_enable ? "true" : "false",
+	     depth.depth_write_enable ? "true" : "false",
+	     vk::to_string(depth.depth_compare_op).c_str(),
+	     depth.depth_clear_enable ? "true" : "false",
+	     depth.stencil_test_enable ? "true" : "false",
+	     depth.stencil_clear_enable ? "true" : "false",
+	     state.ps_input_info.ps_depth_export_enable ? "true" : "false",
+	     state.ps_input_info.ps_early_z ? "true" : "false",
+	     state.ps_input_info.ps_pixel_kill_enable ? "true" : "false",
+	     state.ps_input_info.target_shader_mask);
+
+	LOGF("GPU diagnostic DrawSnapshot[%u]: VS buffers=%d attributes=%d dynamic_fetch=%s "
+	     "PS active=%s PS inputs=%u\n",
+	     log_id, vertex.buffers_num, vertex.resources_num,
+	     vertex.has_dynamic_vertex_fetch ? "true" : "false",
+	     state.ps_active ? "true" : "false", state.ps_input_info.input_num);
+	for (int i = 0; i < vertex.buffers_num; i++) {
+		const auto& vb = vertex.buffers[i];
+		LOGF("GPU diagnostic DrawSnapshot[%u]: vb[%d] addr=0x%010" PRIx64
+		     " stride=%u records=%u fetch_index=%u\n",
+		     log_id, i, vb.addr, vb.stride, vb.num_records, vb.fetch_index);
+	}
+
+	LogDiagnosticShaderResources("VS", vertex.stage);
+	if (state.ps_active) {
+		LogDiagnosticShaderResources("PS", state.ps_input_info.stage);
+	}
+}
+
 static void LogDrawStateIfNeeded(const CommandBuffer& buffer, const DrawCallInfo& draw,
 	                             const DrawRenderState& state, uint32_t index_type_and_size,
-                                 const void* index_addr) {
+	                             const void* index_addr) {
+	const auto vertex_hash = state.vertex_info[0].stage.module->info.shader_hash;
+	const auto pixel_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	// Capture the exact Demon’s Souls shader pair identified by the GTX 970 device-loss report.
+	// This narrowly scoped snapshot is independent of the optional verbose graphics dump.
+	const bool diagnostic_match =
+	    vertex_hash == 0x004c650d72ecd57cull && pixel_hash == 0x94fd11e8abbdc3c8ull;
+	if (diagnostic_match) {
+		LogDiagnosticDrawState(buffer, draw, state, index_type_and_size, index_addr);
+	}
+
 	if (!graphics_debug_dump_enabled()) {
 		return;
 	}
