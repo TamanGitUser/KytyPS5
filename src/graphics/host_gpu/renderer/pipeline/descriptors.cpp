@@ -969,6 +969,35 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 			const ImageSubresourceRange range {view.base_level, view.level_count, view.base_layer,
 			                                   view.layer_count};
 			const bool storage = binding.desc.type == TextureCache::BindingType::Storage;
+			const bool gpu_diagnostic_shader =
+			    program.shader_hash == 0x4f97479bb358932full ||
+			    program.shader_hash == 0x94fd11e8abbdc3c8ull;
+			const auto old_layout = image.backing.state.layout;
+			const auto old_access = image.backing.state.access_mask;
+			const auto old_stage  = image.backing.state.pl_stage;
+			const char* transition_path =
+			    image.binding.is_target ? "render-target"
+			    : image.binding.force_general && !image.info.IsDepth() ? "force-general"
+			    : storage ? "storage-general"
+			              : "sampled-read-layout";
+			if (gpu_diagnostic_shader) {
+				const auto& metadata = program.info.images[i];
+				LOGF("GPU diagnostic image-binding begin: shader=0x%016" PRIx64
+				     " index=%u class=%u read=%s written=%s atomic=%s "
+				     "guest_addr=0x%010" PRIx64 " guest_size=0x%016" PRIx64
+				     " extent=%ux%u format=%s view_format=%s binding_type=%u "
+				     "image_id=%u image_serial=%" PRIu64 " path=%s "
+				     "old_layout=%s old_stage=0x%016" PRIx64 " old_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, static_cast<uint32_t>(metadata.resource_class),
+				     metadata.read ? "true" : "false", metadata.written ? "true" : "false",
+				     metadata.atomic ? "true" : "false", image.info.data.address,
+				     image.info.data.size, image.info.extent.width, image.info.extent.height,
+				     vk::to_string(image.info.pixel_format).c_str(),
+				     vk::to_string(binding.desc.view_info.format).c_str(),
+				     static_cast<uint32_t>(binding.desc.type), binding.image_id.index, image.serial,
+				     transition_path, vk::to_string(old_layout).c_str(),
+				     static_cast<uint64_t>(old_stage), static_cast<uint64_t>(old_access));
+			}
 			if (image.binding.is_target) {
 				const auto layout = image.binding.attachment_layout;
 				EXIT_IF(layout == vk::ImageLayout::eUndefined);
@@ -1000,6 +1029,16 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 				image.Transit(image.ReadLayout(), vk::AccessFlagBits2::eShaderRead, range, vk_buffer);
 			}
 			binding.layout = image.backing.state.layout;
+			if (gpu_diagnostic_shader) {
+				LOGF("GPU diagnostic image-binding end: shader=0x%016" PRIx64
+				     " index=%u image_id=%u image_serial=%" PRIu64
+				     " new_layout=%s new_stage=0x%016" PRIx64
+				     " new_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, binding.image_id.index, image.serial,
+				     vk::to_string(image.backing.state.layout).c_str(),
+				     static_cast<uint64_t>(image.backing.state.pl_stage),
+				     static_cast<uint64_t>(image.backing.state.access_mask));
+			}
 		}
 
 		std::array<size_t, ShaderRecompiler::IR::ImageBindingCount> image_starts {};
