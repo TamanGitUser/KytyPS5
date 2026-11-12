@@ -1025,6 +1025,82 @@ static void LogDiagnosticShaderResources(const char* stage_name, const ShaderSta
 	log_descriptors("buffer", resources.buffers);
 	log_descriptors("image", resources.images);
 	log_descriptors("sampler", resources.samplers);
+
+	if (stage.module == nullptr) {
+		LOGF("GPU diagnostic %s compiled shader metadata: unavailable\n", stage_name);
+		return;
+	}
+	const auto& shader_info = stage.module->info.info;
+	const auto image_count = std::min(resources.images.size(), shader_info.images.size());
+	for (size_t i = 0; i < image_count && i < 32; i++) {
+		const auto& metadata = shader_info.images[i];
+		ShaderTextureResource descriptor {};
+		std::memcpy(&descriptor, resources.images[i].dwords.data(), sizeof(descriptor));
+		const auto max_mip = metadata.r128 ? descriptor.LastLevel() : descriptor.MaxMip();
+		const auto levels = descriptor.Type() == Prospero::ImageType::kColor2DMsaa ||
+		                    descriptor.Type() == Prospero::ImageType::kColor2DMsaaArray
+		                        ? 1u
+		                        : static_cast<uint32_t>(max_mip) + 1u;
+		LOGF("GPU diagnostic %s image[%zu] meta_class=%u sampled=%s read=%s written=%s "
+		     "atomic=%s heap=%s numeric=%u dimension=%u mip_mode=%u mip_count=%u "
+		     "guest_addr=0x%010" PRIx64 " descriptor_type=%u format=%u extent=%ux%u "
+		     "depth=%u tile=%u levels=%u base_level=%u last_level=%u max_mip=%u\n",
+		     stage_name, i, static_cast<uint32_t>(metadata.resource_class),
+		     metadata.resource_class == ShaderRecompiler::IR::ImageResourceClass::Sampled
+		         ? "true"
+		         : "false",
+		     metadata.read ? "true" : "false", metadata.written ? "true" : "false",
+		     metadata.atomic ? "true" : "false", metadata.heap ? "true" : "false",
+		     static_cast<uint32_t>(metadata.numeric_class),
+		     static_cast<uint32_t>(metadata.dimension), static_cast<uint32_t>(metadata.mip_mode),
+		     metadata.mip_count, descriptor.Base40(), static_cast<uint32_t>(descriptor.Type()),
+		     static_cast<uint32_t>(descriptor.Format()),
+		     static_cast<uint32_t>(descriptor.Width5()) + 1u,
+		     static_cast<uint32_t>(descriptor.Height5()) + 1u,
+		     static_cast<uint32_t>(descriptor.Depth()) + 1u,
+		     static_cast<uint32_t>(descriptor.TileMode()), levels,
+		     static_cast<uint32_t>(descriptor.BaseLevel()),
+		     static_cast<uint32_t>(descriptor.LastLevel()), static_cast<uint32_t>(max_mip));
+	}
+	if (shader_info.images.size() != resources.images.size()) {
+		LOGF("GPU diagnostic %s image metadata/descriptor count mismatch: %zu/%zu\n",
+		     stage_name, shader_info.images.size(), resources.images.size());
+	}
+	for (size_t i = 0; i < shader_info.sampled_pairs.size() && i < 32; i++) {
+		const auto& pair = shader_info.sampled_pairs[i];
+		LOGF("GPU diagnostic %s sampled_pair[%zu]: image=%u sampler=%u first_use_pc=0x%08"
+		     PRIx32 "\n",
+		     stage_name, i, pair.image, pair.sampler, pair.first_use_pc);
+	}
+	for (size_t i = 0; i < shader_info.samplers.size() && i < 32; i++) {
+		const auto& metadata = shader_info.samplers[i];
+		if (metadata.snapshot_index >= resources.samplers.size()) {
+			LOGF("GPU diagnostic %s sampler[%zu]: snapshot_index=%u out of range (%zu)\n",
+			     stage_name, i, metadata.snapshot_index, resources.samplers.size());
+			continue;
+		}
+		ShaderSamplerResource descriptor {};
+		std::memcpy(&descriptor,
+		            resources.samplers[metadata.snapshot_index].dwords.data(),
+		            sizeof(descriptor));
+		LOGF("GPU diagnostic %s sampler[%zu]: source=%u snapshot_index=%u clamp=%u/%u/%u "
+		     "filter=%u/%u/%u mip=%u lod=%u-%u bias=%d\n",
+		     stage_name, i, metadata.source, metadata.snapshot_index,
+		     static_cast<uint32_t>(descriptor.ClampX()),
+		     static_cast<uint32_t>(descriptor.ClampY()),
+		     static_cast<uint32_t>(descriptor.ClampZ()),
+		     static_cast<uint32_t>(descriptor.XyMagFilter()),
+		     static_cast<uint32_t>(descriptor.XyMinFilter()),
+		     static_cast<uint32_t>(descriptor.ZFilter()),
+		     static_cast<uint32_t>(descriptor.MipFilter()),
+		     static_cast<uint32_t>(descriptor.MinLod()),
+		     static_cast<uint32_t>(descriptor.MaxLod()),
+		     static_cast<int32_t>(descriptor.LodBias()));
+	}
+	for (size_t i = 0; i < resources.user_data.size() && i < 32; i++) {
+		LOGF("GPU diagnostic %s user_data[%zu]=0x%08" PRIx32 "\n",
+		     stage_name, i, resources.user_data[i]);
+	}
 }
 
 static void LogDiagnosticDrawState(const CommandBuffer& buffer, const DrawCallInfo& draw,

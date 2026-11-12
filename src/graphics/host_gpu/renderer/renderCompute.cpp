@@ -382,7 +382,7 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 		// while allowing the queue to execute asynchronously.
 		ShaderWriteHazardBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	}
-	if (Config::GraphicsDebugDumpEnabled()) {
+	if (Config::GraphicsDebugDumpEnabled() || program.shader_hash == 0x4f97479bb358932full) {
 		const auto sampled_images = std::count_if(
 		    program.info.images.begin(), program.info.images.end(), [](const auto& image) {
 			    return image.resource_class == ShaderRecompiler::IR::ImageResourceClass::Sampled;
@@ -441,6 +441,9 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 			     static_cast<uint32_t>(r.ZFilter()), static_cast<uint32_t>(r.MipFilter()),
 			     static_cast<uint32_t>(r.MinLod()), static_cast<uint32_t>(r.MaxLod()),
 			     static_cast<int32_t>(r.LodBias()));
+		}
+		for (uint32_t i = 0; i < resources.user_data.size() && i < 32; i++) {
+			LOGF("  CS user_data[%u]=0x%08" PRIx32 "\n", i, resources.user_data[i]);
 		}
 	}
 
