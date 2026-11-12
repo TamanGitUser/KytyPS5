@@ -415,7 +415,14 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 	options.shader_hash     = params.hash;
 	options.user_data       = user_data;
 	options.back_code       = params.back_code;
-	options.dump_ir         = Config::GetShaderLogDirection() != Config::LogDirection::Silent;
+	const bool diagnostic_shader =
+	    params.hash == 0x4f97479bb358932full || params.hash == 0x94fd11e8abbdc3c8ull;
+	options.dump_ir = Config::GetShaderLogDirection() != Config::LogDirection::Silent ||
+	                  diagnostic_shader;
+	if (diagnostic_shader) {
+		LOGF("GPU diagnostic shader IR capture enabled: stage=%s hash=0x%016" PRIx64 "\n",
+		     ShaderRecompiler::StageName(options.stage), params.hash);
+	}
 	options.emit_debug_info = Config::GraphicsDebugDumpEnabled();
 	ShaderRecompiler::ShaderSource source;
 	if (entry == m_program_cache.end()) {
