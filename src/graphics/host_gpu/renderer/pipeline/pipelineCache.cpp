@@ -149,7 +149,7 @@ void DumpDiagnosticShaderDisassembly(const std::vector<uint32_t>& words,
 	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_INDENT);
 	if (!disassembler.Disassemble(words, &text, options)) {
 		LOGF_COLOR(Log::Color::BrightRed,
-		           "GPU diagnostic SPIR-V disassembly failed for %s\\n", name.c_str());
+		           "GPU diagnostic SPIR-V disassembly failed for %s\n", name.c_str());
 		return;
 	}
 	const auto path = Config::GetShaderLogFolder() / name;
@@ -157,12 +157,12 @@ void DumpDiagnosticShaderDisassembly(const std::vector<uint32_t>& words,
 	Common::File file(path);
 	if (file.IsInvalid()) {
 		const auto path_text = Common::PathToString(path);
-		LOGF_COLOR(Log::Color::BrightRed, "Can't create file: %s\\n", path_text.c_str());
+		LOGF_COLOR(Log::Color::BrightRed, "Can't create file: %s\n", path_text.c_str());
 		return;
 	}
 	file.Write(text.data(), text.size());
 	const auto path_text = Common::PathToString(path);
-	LOGF("GPU diagnostic SPIR-V disassembly written: %s (%" PRIu64 " bytes)\\n",
+	LOGF("GPU diagnostic SPIR-V disassembly written: %s (%" PRIu64 " bytes)\n",
 	     path_text.c_str(), static_cast<uint64_t>(text.size()));
 }
 
@@ -357,7 +357,8 @@ ShaderModule& PipelineCache::CompileModule(Program& program, const ProgramKey& k
 
 	const auto* stage = ShaderRecompiler::StageName(key.stage);
 	const bool diagnostic_shader =
-	    key.hash == 0x4f97479bb358932full || key.hash == 0x94fd11e8abbdc3c8ull;
+	    key.hash == 0x4f97479bb358932full || key.hash == 0x94fd11e8abbdc3c8ull ||
+	    (key.stage == ShaderType::Vertex && key.hash == 0x004c650d72ecd57cull);
 	DumpShader(result.spirv, fmt::format("{}_{:016x}_{:016x}.spv", stage, key.hash, id),
 	           diagnostic_shader);
 	if (diagnostic_shader) {
