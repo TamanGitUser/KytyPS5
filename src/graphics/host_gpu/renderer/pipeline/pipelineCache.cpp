@@ -117,8 +117,9 @@ bool ReadShaderGuestMemory(void*, uint64_t address, std::span<uint32_t> values) 
 	       Libs::LibKernel::Memory::TryReadBufferBacking(address, values.data(), values.size_bytes());
 }
 
-void DumpShader(std::span<const uint32_t> words, const std::string& name) {
-	if (!Config::GraphicsDebugDumpEnabled()) {
+void DumpShader(std::span<const uint32_t> words, const std::string& name,
+                bool force = false) {
+	if (!force && !Config::GraphicsDebugDumpEnabled()) {
 		return;
 	}
 	const auto path = Config::GetShaderLogFolder() / name;
@@ -130,6 +131,39 @@ void DumpShader(std::span<const uint32_t> words, const std::string& name) {
 		return;
 	}
 	file.Write(words.data(), words.size_bytes());
+	if (force) {
+		const auto path_text = Common::PathToString(path);
+		LOGF("GPU diagnostic SPIR-V binary written: %s (%" PRIu64 " bytes)\n",
+		     path_text.c_str(), static_cast<uint64_t>(words.size_bytes()));
+	}
+}
+
+void DumpDiagnosticShaderDisassembly(const std::vector<uint32_t>& words,
+                                     const std::string& name) {
+	spvtools::SpirvTools disassembler(SPV_ENV_VULKAN_1_3);
+	std::string          text;
+	const auto options =
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_NO_HEADER) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_COMMENT) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_INDENT);
+	if (!disassembler.Disassemble(words, &text, options)) {
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "GPU diagnostic SPIR-V disassembly failed for %s\n", name.c_str());
+		return;
+	}
+	const auto path = Config::GetShaderLogFolder() / name;
+	Common::File::CreateDirectories(path.parent_path());
+	Common::File file(path);
+	if (file.IsInvalid()) {
+		const auto path_text = Common::PathToString(path);
+		LOGF_COLOR(Log::Color::BrightRed, "Can't create file: %s\n", path_text.c_str());
+		return;
+	}
+	file.Write(text.data(), text.size());
+	const auto path_text = Common::PathToString(path);
+	LOGF("GPU diagnostic SPIR-V disassembly written: %s (%" PRIu64 " bytes)\n",
+	     path_text.c_str(), static_cast<uint64_t>(text.size()));
 }
 
 void ValidateShaderSpirv(const char* stage, uint64_t shader_hash,
@@ -237,7 +271,8 @@ std::vector<vk::Format> VertexInputFormats(const ShaderVertexInputInfo&         
 ShaderRecompiler::Spirv::Profile SpirvProfile(const GraphicContext& graphics) {
 	// AMD GPUs (vendor 0x1002) run NMin/NMax as v_min/v_max, which give the guest's NaN and
 	// signed-zero results; GLSL.std.450 alone does not order -0 below +0.
-	return {.maintenance8           = graphics.maintenance8_enabled,
+	return {.fragment_barycentric   = graphics.fragment_shader_barycentric_enabled,
+	        .maintenance8           = graphics.maintenance8_enabled,
 	        .native_float_min_max   = graphics.physical_device_properties.vendorID == 0x1002u,
 	        .device_clock_period_ps = graphics.device_clock_period_ps,
 	        .robust_buffer_access   = graphics.robust_buffer_access_enabled,
@@ -321,7 +356,15 @@ ShaderModule& PipelineCache::CompileModule(Program& program, const ProgramKey& k
 	const auto id = XXH3_64bits(inputs.bytes.data(), inputs.bytes.size());
 
 	const auto* stage = ShaderRecompiler::StageName(key.stage);
-	DumpShader(result.spirv, fmt::format("{}_{:016x}_{:016x}.spv", stage, key.hash, id));
+	const bool diagnostic_shader =
+	    key.hash == 0x4f97479bb358932full || key.hash == 0x94fd11e8abbdc3c8ull ||
+	    (key.stage == ShaderType::Vertex && key.hash == 0x004c650d72ecd57cull);
+	DumpShader(result.spirv, fmt::format("{}_{:016x}_{:016x}.spv", stage, key.hash, id),
+	           diagnostic_shader);
+	if (diagnostic_shader) {
+		DumpDiagnosticShaderDisassembly(
+		    result.spirv, fmt::format("{}_{:016x}_{:016x}.spvasm", stage, key.hash, id));
+	}
 	ValidateShaderSpirv(stage, key.hash, result.spirv, profile.maintenance8);
 	auto& module = program.modules.emplace_back(ShaderModule {
 	    .id             = id,
@@ -415,7 +458,14 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 	options.shader_hash     = params.hash;
 	options.user_data       = user_data;
 	options.back_code       = params.back_code;
-	options.dump_ir         = Config::GetShaderLogDirection() != Config::LogDirection::Silent;
+	const bool diagnostic_shader =
+	    params.hash == 0x4f97479bb358932full || params.hash == 0x94fd11e8abbdc3c8ull;
+	options.dump_ir = Config::GetShaderLogDirection() != Config::LogDirection::Silent ||
+	                  diagnostic_shader;
+	if (diagnostic_shader) {
+		LOGF("GPU diagnostic shader IR capture enabled: stage=%s hash=0x%016" PRIx64 "\n",
+		     ShaderRecompiler::StageName(options.stage), params.hash);
+	}
 	options.emit_debug_info = Config::GraphicsDebugDumpEnabled();
 	ShaderRecompiler::ShaderSource source;
 	if (entry == m_program_cache.end()) {

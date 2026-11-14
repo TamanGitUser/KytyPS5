@@ -137,6 +137,10 @@ bool VulkanValidationEnabled() {
 	return g_config->vulkan_validation_enabled;
 }
 
+bool NvidiaGpuDiagnosticsEnabled() {
+	return g_config->nvidia_gpu_diagnostics_enabled;
+}
+
 bool IsNetworkConnected() {
 	return g_config->network_connected;
 }

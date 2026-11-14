@@ -235,9 +235,47 @@ void Image::Transit(vk::ImageLayout destination_layout, vk::AccessFlags2 destina
 		destination_stage |=
 		    vk::PipelineStageFlagBits2::eAllGraphics | vk::PipelineStageFlagBits2::eComputeShader;
 	}
+	const bool gpu_diagnostic_image = info.data.address == 0x027e8e0000ull;
+	const auto old_state = backing.state;
 	const auto barriers =
 	    GetBarriers(destination_layout, destination_access, destination_stage, range);
+	if (gpu_diagnostic_image) {
+		LOGF("GPU diagnostic image-transition: guest_addr=0x%010" PRIx64
+		     " image_serial=%" PRIu64 " barrier_count=%" PRIu64
+		     " old_layout=%s old_stage=0x%016" PRIx64 " old_access=0x%016" PRIx64
+		     " new_layout=%s new_stage=0x%016" PRIx64 " new_access=0x%016" PRIx64 "\n",
+		     info.data.address, serial, static_cast<uint64_t>(barriers.size()),
+		     vk::to_string(old_state.layout).c_str(),
+		     static_cast<uint64_t>(old_state.pl_stage),
+		     static_cast<uint64_t>(old_state.access_mask),
+		     vk::to_string(destination_layout).c_str(),
+		     static_cast<uint64_t>(destination_stage),
+		     static_cast<uint64_t>(destination_access));
+		for (size_t index = 0; index < barriers.size(); index++) {
+			const auto& barrier = barriers[index];
+			LOGF("GPU diagnostic image-barrier[%" PRIu64
+			     "]: src_stage=0x%016" PRIx64 " src_access=0x%016" PRIx64
+			     " dst_stage=0x%016" PRIx64 " dst_access=0x%016" PRIx64
+			     " old_layout=%s new_layout=%s aspect=0x%08x"
+			     " mip=%u+%u layer=%u+%u\n",
+			     static_cast<uint64_t>(index),
+			     static_cast<uint64_t>(barrier.srcStageMask),
+			     static_cast<uint64_t>(barrier.srcAccessMask),
+			     static_cast<uint64_t>(barrier.dstStageMask),
+			     static_cast<uint64_t>(barrier.dstAccessMask),
+			     vk::to_string(barrier.oldLayout).c_str(),
+			     vk::to_string(barrier.newLayout).c_str(),
+			     static_cast<uint32_t>(barrier.subresourceRange.aspectMask),
+			     barrier.subresourceRange.baseMipLevel,
+			     barrier.subresourceRange.levelCount,
+			     barrier.subresourceRange.baseArrayLayer,
+			     barrier.subresourceRange.layerCount);
+		}
+	}
 	if (barriers.empty()) {
+		if (gpu_diagnostic_image) {
+			LOGF("GPU diagnostic image-barrier recording=skipped reason=no-state-change\n");
+		}
 		return;
 	}
 	m_scheduler.EndRendering();
@@ -245,6 +283,10 @@ void Image::Transit(vk::ImageLayout destination_layout, vk::AccessFlags2 destina
 	dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
 	dependency.pImageMemoryBarriers    = barriers.data();
 	command_buffer.pipelineBarrier2(dependency);
+	if (gpu_diagnostic_image) {
+		LOGF("GPU diagnostic image-barrier recording=recorded count=%" PRIu64 "\n",
+		     static_cast<uint64_t>(barriers.size()));
+	}
 }
 
 void Image::Upload(std::span<const vk::BufferImageCopy> copies, vk::Buffer buffer, uint64_t offset,

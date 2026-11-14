@@ -1,3 +1,4 @@
+# GTX (Maxwell) fork changes: modified 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 cmake_minimum_required(VERSION 3.19...4.3)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
@@ -712,6 +713,8 @@ if(BUILD_TESTING)
 	add_test(NAME save_data_dialog COMMAND $<TARGET_FILE:save_data_dialog_tests>)
 	add_test(NAME http_uri_parse COMMAND $<TARGET_FILE:http_uri_parse_tests>)
 	add_test(NAME rtc COMMAND $<TARGET_FILE:rtc_tests>)
+	add_test(NAME depth_texture_encoding
+		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --depth-texture-encoding-only)
 	add_test(NAME shader_recompiler_compute COMMAND $<TARGET_FILE:shader_recompiler_compute_tests>)
 	add_test(NAME shader_recompiler_tessellation
 		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --tessellation-only)

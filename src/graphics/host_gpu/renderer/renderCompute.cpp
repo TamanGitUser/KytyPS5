@@ -16,6 +16,7 @@
 #include "graphics/host_gpu/renderer/pipeline/descriptors.h"
 #include "graphics/host_gpu/renderer/pipeline/pipelineCache.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vulkanCommon.h"
@@ -381,7 +382,7 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 		// while allowing the queue to execute asynchronously.
 		ShaderWriteHazardBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	}
-	if (Config::GraphicsDebugDumpEnabled()) {
+	if (Config::GraphicsDebugDumpEnabled() || program.shader_hash == 0x4f97479bb358932full) {
 		const auto sampled_images = std::count_if(
 		    program.info.images.begin(), program.info.images.end(), [](const auto& image) {
 			    return image.resource_class == ShaderRecompiler::IR::ImageResourceClass::Sampled;
@@ -441,6 +442,9 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 			     static_cast<uint32_t>(r.MinLod()), static_cast<uint32_t>(r.MaxLod()),
 			     static_cast<int32_t>(r.LodBias()));
 		}
+		for (uint32_t i = 0; i < resources.user_data.size() && i < 32; i++) {
+			LOGF("  CS user_data[%u]=0x%08" PRIx32 "\n", i, resources.user_data[i]);
+		}
 	}
 
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
@@ -448,6 +452,10 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 	const uint64_t     group_threads = uint64_t {std::max(input_info.threads_num[0], 1u)} *
 	                                   std::max(input_info.threads_num[1], 1u) *
 	                                   std::max(input_info.threads_num[2], 1u);
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::ComputeDispatchBegin,
+	                        program.shader_hash, mode, thread_group_x, thread_group_y,
+	                        thread_group_z);
 	if ((mode & DISPATCH_INITIATOR_ORDERED_APPEND_ENABLE) != 0 && program.info.uses_gds &&
 	    group_threads <= input_info.wave_size && !input_info.lds_storage) {
 		// A single guest wave per group can run in launch order without a device-wide
@@ -465,6 +473,10 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 	} else {
 		vk_buffer.dispatch(thread_group_x, thread_group_y, thread_group_z);
 	}
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::ComputeDispatchEnd,
+	                        program.shader_hash, mode, thread_group_x, thread_group_y,
+	                        thread_group_z);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::Dispatches);
 
 	// The removed host fence also ordered read-only dispatches before later writers.
@@ -529,7 +541,13 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 	                          vk::PipelineStageFlagBits::eDrawIndirect, {},
 	                          1, &barrier, 0, nullptr, 0, nullptr);
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::ComputeDispatchIndirectBegin,
+	                        program.shader_hash, args_addr);
 	vk_buffer.dispatchIndirect(args_buffer->Handle(), args_offset);
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::ComputeDispatchIndirectEnd,
+	                        program.shader_hash, args_addr);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::Dispatches);
 	ShaderAccessBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	ResetBindings();

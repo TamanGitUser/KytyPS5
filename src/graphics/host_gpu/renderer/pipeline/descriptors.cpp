@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/pipeline/descriptors.h"
 
 #include "common/alignment.h"
@@ -174,7 +175,7 @@ bool IsSupportedDepthTextureEncoding(const ShaderTextureResource& descriptor, bo
 		return false;
 	}
 	// META_PIPE_ALIGNED only affects metadata addressing, which a clear COMPRESSION_EN disables.
-	const auto         metadata_control = descriptor.fields[6] & 0x00ffffffu;
+	const auto         metadata_control = descriptor.fields[6] & 0x00ffff00u;
 	constexpr uint32_t pipe_aligned     = 1u << 19u;
 	if ((metadata_control & ~pipe_aligned) == 0) {
 		return true;
@@ -581,7 +582,8 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	}
 	const auto view_format =
 	    storage ? StorageViewFormat(resource, format, pixel_format) : pixel_format;
-	const auto              block_bytes = Prospero::BlockCompressedBytesPerBlock(format);
+	const auto block_bytes   = Prospero::BlockCompressedBytesPerBlock(format);
+	const bool meta_compress = block_bytes == 0 && !resource.r128 && descriptor.MetaCompress();
 	TextureCache::ImageDesc desc {};
 	desc.info.data         = {address, 0};
 	desc.info.pixel_format = pixel_format;
@@ -593,12 +595,12 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	    block_bytes != 0 ? block_bytes : Prospero::NumBytesPerElement(format);
 	desc.info.samples   = samples;
 	desc.info.tile_mode = tile;
-	if (!resource.r128 && descriptor.MetaCompress() && tile != Prospero::TileMode::kDepth) {
+	if (meta_compress && tile != Prospero::TileMode::kDepth) {
 		desc.info.metadata.kind = ImageMetadataKind::Dcc;
 	}
 	if (levels > physical_levels) {
 		if (!ResolveTextureMipView(desc.info, physical_levels,
-		                           !resource.r128 && descriptor.MetaCompress(), view_levels,
+		                           meta_compress, view_levels,
 		                           view_base)) {
 			EXIT("unsupported texture mip view changes physical layout: base=%u last=%u max=%u "
 			     "extent=%ux%ux%u tile=%u\n",
@@ -618,7 +620,7 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	if (storage) {
 		ValidateStorageTexture(resource, descriptor, desc.info.data.size);
 	}
-	if (!resource.r128 && descriptor.MetaCompress() && tile != Prospero::TileMode::kDepth) {
+	if (meta_compress && tile != Prospero::TileMode::kDepth) {
 		TileSizeAlign metadata_size {};
 		(void)TileGetDccSize(width, height, volume ? depth : image_layers,
 		                     desc.info.bytes_per_block, physical_levels, tile, metadata_size,
@@ -967,6 +969,35 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 			const ImageSubresourceRange range {view.base_level, view.level_count, view.base_layer,
 			                                   view.layer_count};
 			const bool storage = binding.desc.type == TextureCache::BindingType::Storage;
+			const bool gpu_diagnostic_shader =
+			    program.shader_hash == 0x4f97479bb358932full ||
+			    program.shader_hash == 0x94fd11e8abbdc3c8ull;
+			const auto old_layout = image.backing.state.layout;
+			const auto old_access = image.backing.state.access_mask;
+			const auto old_stage  = image.backing.state.pl_stage;
+			const char* transition_path =
+			    image.binding.is_target ? "render-target"
+			    : image.binding.force_general && !image.info.IsDepth() ? "force-general"
+			    : storage ? "storage-general"
+			              : "sampled-read-layout";
+			if (gpu_diagnostic_shader) {
+				const auto& metadata = program.info.images[i];
+				LOGF("GPU diagnostic image-binding begin: shader=0x%016" PRIx64
+				     " index=%u class=%u read=%s written=%s atomic=%s "
+				     "guest_addr=0x%010" PRIx64 " guest_size=0x%016" PRIx64
+				     " extent=%ux%u format=%s view_format=%s binding_type=%u "
+				     "image_id=%u image_serial=%" PRIu64 " path=%s "
+				     "old_layout=%s old_stage=0x%016" PRIx64 " old_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, static_cast<uint32_t>(metadata.resource_class),
+				     metadata.read ? "true" : "false", metadata.written ? "true" : "false",
+				     metadata.atomic ? "true" : "false", image.info.data.address,
+				     image.info.data.size, image.info.extent.width, image.info.extent.height,
+				     vk::to_string(image.info.pixel_format).c_str(),
+				     vk::to_string(binding.desc.view_info.format).c_str(),
+				     static_cast<uint32_t>(binding.desc.type), binding.image_id.index, image.serial,
+				     transition_path, vk::to_string(old_layout).c_str(),
+				     static_cast<uint64_t>(old_stage), static_cast<uint64_t>(old_access));
+			}
 			if (image.binding.is_target) {
 				const auto layout = image.binding.attachment_layout;
 				EXIT_IF(layout == vk::ImageLayout::eUndefined);
@@ -998,6 +1029,16 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 				image.Transit(image.ReadLayout(), vk::AccessFlagBits2::eShaderRead, range, vk_buffer);
 			}
 			binding.layout = image.backing.state.layout;
+			if (gpu_diagnostic_shader) {
+				LOGF("GPU diagnostic image-binding end: shader=0x%016" PRIx64
+				     " index=%u image_id=%u image_serial=%" PRIu64
+				     " new_layout=%s new_stage=0x%016" PRIx64
+				     " new_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, binding.image_id.index, image.serial,
+				     vk::to_string(image.backing.state.layout).c_str(),
+				     static_cast<uint64_t>(image.backing.state.pl_stage),
+				     static_cast<uint64_t>(image.backing.state.access_mask));
+			}
 		}
 
 		std::array<size_t, ShaderRecompiler::IR::ImageBindingCount> image_starts {};

@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #define SPV_ENABLE_UTILITY_CODE
 
 #include "common/assert.h"
@@ -14642,6 +14643,61 @@ public:
                     std::ranges::all_of(metadata, [](uint8_t byte) { return byte == 0xff; }),
                 "comparison clear retained the native DCC clear key");
       }
+      context.UnmapMemory(base, allocation_size);
+      scheduler.Finish();
+      context.ShutdownGpu();
+      LibKernel::Memory::InstallGpuResources(nullptr);
+    }
+    {
+      constexpr uint64_t bc_address = base + 0x20000;
+      constexpr uint64_t bc_metadata = 0x00003f39c0003e00ull;
+      RenderContext context(m_runtime_context);
+      context.InitializeGpu(nullptr);
+      LibKernel::Memory::InstallGpuResources(&context);
+      auto &scheduler = context.GetCommandScheduler();
+      HW::Context registers{};
+      HW::UserConfig user_config{};
+      HW::Shader shaders{};
+      scheduler.Begin(registers, user_config, shaders);
+      context.MapMemory(base, allocation_size);
+      auto &cache = context.GetTextureCache();
+      auto &executor = context.GetRenderExecutor();
+      const ShaderTextureResource descriptor{{static_cast<uint32_t>(bc_address >> 8u),
+          0xcae00000u, 0x001fc01fu, 0x91b00facu, 0, 0,
+          0x00200000u | (static_cast<uint32_t>(bc_metadata >> 8u) << 24u),
+          static_cast<uint32_t>(bc_metadata >> 16u)}};
+      ShaderRecompiler::IR::DescriptorValue value{};
+      value.dword_count = 8;
+      std::copy_n(descriptor.fields, 8, value.dwords.begin());
+      ShaderRecompiler::IR::ImageResource resource{};
+      resource.resource_class = ShaderRecompiler::IR::ImageResourceClass::Sampled;
+      resource.numeric_class = Prospero::TextureNumericClass::Float;
+      resource.dimension = ShaderRecompiler::Decoder::ImageDimension::Dim2D;
+      resource.read = true;
+      const auto binding = RenderExecutorTestAccess::ResolveTexture(executor, resource, value);
+      Require(name, "block-compressed metadata ignored",
+              binding.desc.info.extent == vk::Extent3D{128, 128, 1} &&
+                  binding.desc.info.metadata.kind == ImageMetadataKind::None &&
+                  binding.desc.info.metadata.range.size == 0,
+              "a block-compressed texture adopted DCC metadata");
+      Require(name, "block-compressed sampled view",
+              cache.FindTexture(binding.image_id, binding.desc) != nullptr,
+              "a block-compressed MetaCompress texture did not produce a view");
+      auto mipped = value;
+      mipped.dwords[0] = static_cast<uint32_t>((bc_address + 0x100000) >> 8u);
+      mipped.dwords[1] = 0xca900000u;
+      mipped.dwords[2] = 0x00ffc0ffu;
+      mipped.dwords[3] = 0xd051102cu;
+      mipped.dwords[5] = 0x00700000u;
+      const auto mipped_binding =
+          RenderExecutorTestAccess::ResolveTexture(executor, resource, mipped);
+      Require(name, "block-compressed mip view past MAX_MIP",
+              mipped_binding.desc.info.extent == vk::Extent3D{512, 512, 1} &&
+                  mipped_binding.desc.info.resources.levels == 1 &&
+                  mipped_binding.desc.view_info.base_level == 0 &&
+                  mipped_binding.desc.info.metadata.kind == ImageMetadataKind::None &&
+                  cache.FindTexture(mipped_binding.image_id, mipped_binding.desc) != nullptr,
+              "a block-compressed mip view past MAX_MIP kept DCC metadata");
       context.UnmapMemory(base, allocation_size);
       scheduler.Finish();
       context.ShutdownGpu();
@@ -51362,6 +51418,42 @@ void CheckDepthTextureEncoding() {
           IsSupportedDepthTextureEncoding(first_use_depth),
           "captured comparison texture required tracked HTILE metadata");
 
+  const ShaderTextureResource counter_id_depth{{
+      0x027ac800u, 0xc1600000u, 0x021bc3bfu, 0x91800924u,
+      0x00000000u, 0x00700000u, 0x00000002u, 0x000000c8u,
+  }};
+  auto compressed_counter_id = compressed_descriptor;
+  compressed_counter_id.fields[6] |= 0x82u;
+  auto msaa_counter_id = uncompressed_msaa;
+  msaa_counter_id.fields[6] |= 0x80u;
+  auto pipe_aligned_counter_id = pipe_aligned_metadata;
+  pipe_aligned_counter_id.fields[6] |= 0x02u;
+  auto dcc_counter_id = counter_id_depth;
+  dcc_counter_id.fields[6] |= 1u << 22u;
+  Require("DepthTextureEncoding", "PPSA01341 depth with a mip statistics counter id",
+          IsSupportedDepthTextureEncoding(counter_id_depth),
+          "the mip statistics counter id was read as metadata control");
+  Require("DepthTextureEncoding", "compressed, MSAA and pipe-aligned depth with a counter id",
+          IsSupportedDepthTextureEncoding(compressed_counter_id) &&
+              IsSupportedDepthTextureEncoding(msaa_counter_id) &&
+              IsSupportedDepthTextureEncoding(pipe_aligned_counter_id),
+          "a counter id changed the accepted HTILE or MSAA control");
+  Require("DepthTextureEncoding", "DCC control with a counter id",
+          !IsSupportedDepthTextureEncoding(dcc_counter_id),
+          "a counter id hid an unsupported metadata control");
+  auto counting = [](ShaderTextureResource descriptor) {
+    descriptor.fields[5] |= 1u << 25u;
+    return descriptor;
+  };
+  Require("DepthTextureEncoding", "counted depth with a counter id",
+          IsSupportedDepthTextureEncoding(counting(counter_id_depth)) &&
+              IsSupportedDepthTextureEncoding(counting(compressed_counter_id)) &&
+              IsSupportedDepthTextureEncoding(counting(msaa_counter_id)) &&
+              IsSupportedDepthTextureEncoding(counting(pipe_aligned_counter_id)) &&
+              !IsSupportedDepthTextureEncoding(counting(dcc_counter_id)),
+          "enabled mip statistics changed how the counter id is read");
+
+
   auto missing_metadata = compressed_descriptor;
   missing_metadata.fields[6] &= 0x00ffffffu;
   missing_metadata.fields[7] = 0;
@@ -56702,6 +56794,10 @@ int main(int argc, char **argv) {
     VulkanHarness vulkan;
     vulkan.CheckSamplerBorderColors();
     vulkan.CheckSamplerFilterMode();
+    return 0;
+  }
+  if (argc == 2 && std::strcmp(argv[1], "--depth-texture-encoding-only") == 0) {
+    CheckDepthTextureEncoding();
     return 0;
   }
   if (argc == 2 && std::strcmp(argv[1], "--sampled-depth-resource-only") == 0) {

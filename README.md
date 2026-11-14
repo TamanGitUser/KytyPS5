@@ -1,9 +1,14 @@
-# KytyPS5
+# GTX (MAXWELL) of KytyPS5
 
-[![Build KytyPS5 (Windows)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28Windows%29&label=Build%20KytyPS5%20%28Windows%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
-[![Build KytyPS5 (Linux)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28Linux%29&label=Build%20KytyPS5%20%28Linux%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
-[![Build KytyPS5 (macOS)](https://img.shields.io/github/check-runs/KytyPS5/KytyPS5/main?nameFilter=Build%20KytyPS5%20%28macOS%29&label=Build%20KytyPS5%20%28macOS%29)](https://github.com/KytyPS5/KytyPS5/actions/workflows/build.yml)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64%20%7C%20macOS%20x86__64-0078D4.svg)](#system-requirements)
+**GTX (MAXWELL) of KytyPS5** is an independent, community-maintained fork of [KytyPS5](https://github.com/KytyPS5/KytyPS5), focused on compatibility and stability work for NVIDIA Maxwell-class GPUs. The underlying emulator remains KytyPS5; this fork is not an official upstream release and is not affiliated with NVIDIA, Sony Interactive Entertainment, or PlayStation.
+
+Fork-specific changes in this repository are dated 2026-11-08; see the commit history and [FORK-NOTICE.md](FORK-NOTICE.md). This fork preserves the upstream project’s GPL-2.0-only licensing and the original Kyty MIT notice. It does not include games, PS5 firmware, BIOS/keys, PKG files, or other proprietary Sony content. Use only software and game data you are legally entitled to use. See [FORK-NOTICE.md](FORK-NOTICE.md) for the fork’s modifications and distribution notes.
+
+**Release platforms:** Windows x64 and Linux x86-64.
+
+[![Build GTX (MAXWELL) (Windows)](https://img.shields.io/github/check-runs/TamanGitUser/KytyPS5/gtx970-maxwell?nameFilter=Build%20GTX%20%28MAXWELL%29%20of%20KytyPS5%20%28Windows%29&label=Windows%20build)](https://github.com/TamanGitUser/KytyPS5/actions/workflows/build.yml?query=branch%3Agtx970-maxwell)
+[![Build GTX (MAXWELL) (Linux)](https://img.shields.io/github/check-runs/TamanGitUser/KytyPS5/gtx970-maxwell?nameFilter=Build%20GTX%20%28MAXWELL%29%20of%20KytyPS5%20%28Linux%29&label=Linux%20build)](https://github.com/TamanGitUser/KytyPS5/actions/workflows/build.yml?query=branch%3Agtx970-maxwell)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x86--64-0078D4.svg)](#system-requirements)
 [![Status](https://img.shields.io/badge/status-active%20development-orange.svg)](#current-status)
 [![License](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
 
@@ -11,9 +16,7 @@
 
 **[Development on Discord](https://discord.gg/UNrkMqGaBg)** — KytyPS5 development.
 
-KytyPS5 is a free and open-source PlayStation 5 translation layer written in C++ for Windows
-and Linux, with experimental macOS support. It is based on a heavily modified version of
-[Kyty](https://github.com/InoriRus/Kyty). The project is in active development, and behavior
+GTX (MAXWELL) of KytyPS5 is a hardware-focused community fork of the free and open-source PlayStation 5 translation layer. It is based on a heavily modified version of [Kyty](https://github.com/InoriRus/Kyty) and focuses on Windows x64 and Linux x86-64 builds for NVIDIA Maxwell-class GPUs. The project is in active development, and behavior
 can change significantly between builds.
 
 > [!IMPORTANT]
@@ -26,11 +29,7 @@ can change significantly between builds.
 Development is currently focused on expanding game compatibility and improving boot reliability.
 External low-level emulation modules are neither required nor planned.
 
-Windows and Linux are the primary target platforms and receive the most testing.
-
-macOS support is experimental. The emulator is built for x86-64 and runs on Apple Silicon under
-Rosetta 2, with Vulkan provided by MoltenVK. A small number of titles have been verified in-game
-on Apple Silicon hardware; see [Building on macOS](#building-on-macos).
+Windows x64 is the primary release target for this fork. Linux x86-64 is maintained as a secondary build target.
 
 Community game test results are available in the
 [KytyPS5 Compatibility List](https://kytyps5.github.io/).
@@ -117,7 +116,7 @@ Set up the clang-format hook after cloning.
 Install `pre-commit` using the method appropriate for your platform:
 
 - **Arch Linux / CachyOS:** `sudo pacman -S pre-commit`
-- **Other Linux / macOS / Windows:** `python -m pip install pre-commit`
+- **Other Linux / Windows:** `python -m pip install pre-commit`
 
 Then install the Git hook:
 
@@ -148,10 +147,9 @@ the Vulkan/SPIR-V validation rules.
 
 ### System requirements
 
-- Windows 10 version 1803, a current Linux distribution, or macOS on Apple Silicon
-- A 64-bit x86 processor (on macOS, an Apple Silicon processor with Rosetta 2)
-- A Vulkan 1.3-capable GPU with current drivers (on macOS, Vulkan is provided by the bundled
-  MoltenVK)
+- Windows 10 version 1803 or a current Linux distribution
+- A 64-bit x86 processor
+- A Vulkan 1.3-capable GPU with current drivers
 
 ### Build requirements (Windows)
 
@@ -299,51 +297,6 @@ distrobox enter kyty-build -- ./_Build/linux/install/kyty_launcher
 Qt libraries and plugins are bundled. You can also launch directly on a Fedora Atomic host
 if its other system libraries are compatible with the container build.
 
-### Building on macOS
-
-macOS builds target x86-64 and run under Rosetta 2 on Apple Silicon, so the PS5's x86-64 game
-code executes through the same translation layer as the emulator itself. Prebuilt archives are
-attached to releases; the steps below are for building from source.
-
-Requirements:
-
-- An Apple Silicon Mac with Rosetta 2 installed (`softwareupdate --install-rosetta`)
-- Xcode (or the Command Line Tools)
-- Homebrew packages: `brew install cmake ninja glslang python`
-- Qt 6 (Concurrent, Network, and Widgets) with x86-64 support. The official Qt installation is
-  universal and works; Homebrew's Qt is arm64-only and will not link
-
-```bash
-git submodule update --init --recursive
-
-cmake -S . -B _Build/macos -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_PREFIX_PATH="$Qt6_DIR"
-
-cmake --build _Build/macos --target launcher --parallel
-cmake --install _Build/macos --prefix _Build/macos/install
-```
-
-The build re-signs `kyty_emulator` with the JIT entitlements it needs to execute translated
-guest code; no manual signing step is required. When the launcher is built, the installation
-also produces `_Build/macos/install/KytyPS5.app` — double-click to launch the GUI.
-A flat `kyty_emulator` is kept for CLI usage.
-
-Vulkan comes from MoltenVK. Download `MoltenVK-macos.tar` from the
-[MoltenVK releases](https://github.com/KhronosGroup/MoltenVK/releases), then copy
-`MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib` next to the flat `kyty_emulator`
-(and, for the bundle, into `KytyPS5.app/Contents/Frameworks/`) and sign it with an ad hoc signature:
-
-```bash
-codesign --force --sign - _Build/macos/install/libMoltenVK.dylib
-# For the bundle (if present):
-codesign --force --sign - _Build/macos/install/KytyPS5.app/Contents/Frameworks/libMoltenVK.dylib
-codesign --force --sign - _Build/macos/install/KytyPS5.app
-```
-
-Release archives already include a signed `libMoltenVK.dylib` (both flat and inside the bundle).
-
 ### Regression tests
 
 Build every regression executable and run the registered tests with:
@@ -386,10 +339,6 @@ To use the graphical launcher:
 ./_Build/linux/install/kyty_launcher
 ```
 
-```bash
-open _Build/macos/install/KytyPS5.app  # or double-click in Finder
-```
-
 On first launch, add one or more game folders in the global settings. The launcher searches those
 folders recursively for game directories containing `eboot.bin` and ZArchive (`.zar`) game dumps
 whose archive root contains `eboot.bin`. Select a detected game and run it from the game list.
@@ -416,17 +365,6 @@ ZArchive dump:
 ./_Build/linux/install/kyty_emulator --game "/games/ExampleGame.zar"
 ```
 
-On macOS, the adjacent flat or app-bundled `libMoltenVK.dylib` is found automatically; no
-environment variable is required:
-
-```bash
-./_Build/macos/install/kyty_emulator --game "/games/ExampleGame"
-```
-
-To override the Vulkan loader, set `SDL_VULKAN_LIBRARY`:
-
-```bash
-SDL_VULKAN_LIBRARY=/path/to/libMoltenVK.dylib ./kyty_emulator --game "/games/ExampleGame"
 ```
 
 Run `kyty_emulator --help` to see the available graphics, logging, validation, profiling, and

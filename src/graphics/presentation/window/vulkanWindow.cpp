@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #include "common/assert.h"
 #include "common/common.h"
 #include "common/emulatorConfig.h"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fmt/format.h>
 #include <memory>
@@ -402,6 +404,31 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	       feedback_layout, feedback_dynamic, provoking_vertex, maintenance8, shader_clock,
 	       image_atomic_int64, conditional_rendering, barycentric] = supported;
 	graphics.memory_budget_ext_enabled = add(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+	const bool device_fault_extension = add(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+	// A non-empty environment value overrides the persistent launcher setting. "0" disables;
+	// any other non-empty value enables diagnostics for this process.
+	const auto* fault_diagnostics_env = std::getenv("KYTY_DEVICE_FAULT_DIAGNOSTICS");
+	const bool diagnostics_env_override =
+	    fault_diagnostics_env != nullptr && fault_diagnostics_env[0] != '\0';
+	const bool diagnostics_requested = diagnostics_env_override
+	                                       ? std::strcmp(fault_diagnostics_env, "0") != 0
+	                                       : Config::NvidiaGpuDiagnosticsEnabled();
+	const bool diagnostics_config_extension =
+	    diagnostics_requested && add(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+	const bool diagnostic_checkpoints_extension =
+	    diagnostics_requested && add(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+	vk::PhysicalDeviceDiagnosticsConfigFeaturesNV diagnostics_config_features {};
+	if (diagnostics_config_extension) {
+		// Query NVIDIA's optional resource/shader diagnostics only when explicitly requested.
+		diagnostics_config_features.pNext = supported2.pNext;
+		supported2.pNext = &diagnostics_config_features;
+	}
+	vk::PhysicalDeviceFaultFeaturesEXT device_fault {};
+	if (device_fault_extension) {
+		// Query fault details and the optional vendor binary only when the extension is present.
+		device_fault.pNext = supported2.pNext;
+		supported2.pNext = &device_fault;
+	}
 	add(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
 	const bool extended_dynamic_state = add(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
 	if (!add(VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME)) {
@@ -438,11 +465,38 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	}
 	Vr::OpenXrAppendExtensions(device_extensions, available_extensions, true);
 	physical_device.getFeatures2(&supported2);
+	graphics.device_fault_enabled =
+	    device_fault_extension && device_fault.deviceFault == VK_TRUE;
+	graphics.device_fault_vendor_binary_enabled =
+	    graphics.device_fault_enabled && device_fault.deviceFaultVendorBinary == VK_TRUE;
+	graphics.diagnostics_config_enabled =
+	    diagnostics_config_extension && diagnostics_config_features.diagnosticsConfig == VK_TRUE;
+	graphics.device_diagnostic_checkpoints_enabled = diagnostic_checkpoints_extension;
+	const char* diagnostics_status =
+	    !diagnostics_requested ? "disabled by configuration" :
+	    graphics.diagnostics_config_enabled ? "enabled" : "not supported by driver";
+	const char* checkpoints_status =
+	    !diagnostics_requested ? "disabled by configuration" :
+	    graphics.device_diagnostic_checkpoints_enabled ? "enabled" : "not supported by driver";
+	const char* automatic_checkpoints_status =
+	    graphics.diagnostics_config_enabled && graphics.device_diagnostic_checkpoints_enabled
+	        ? "enabled"
+	        : "unavailable";
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Vulkan device-fault reporting: {} (vendor binary: {}, NVIDIA diagnostics: {}, "
+	    "diagnostic checkpoints: {}, automatic checkpoints: {}; request: {}, source: {})\n",
+	    graphics.device_fault_enabled ? "enabled" : "unavailable",
+	    graphics.device_fault_vendor_binary_enabled ? "enabled" : "unavailable",
+	    diagnostics_status, checkpoints_status, automatic_checkpoints_status,
+	    diagnostics_requested ? "enabled" : "disabled",
+	    diagnostics_env_override ? "environment override" : "saved setting"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
+	graphics.fragment_shader_barycentric_enabled = barycentric_supported;
 	if (!barycentric_supported) {
 		Log::WriteToConsoleAndLog(
-		    "WARNING: Your GPU is not fully supported (fragmentShaderBarycentric is unavailable). "
-		    "Some games may render incorrectly or crash.\n");
+		    "WARNING: fragmentShaderBarycentric is unavailable. Shader translation will use "
+		    "standard interpolated inputs where possible and zero explicit barycentric built-ins; "
+		    "some shaders may render incorrectly.\n");
 	}
 	graphics.shader_image_int64_atomics_enabled = image_atomic_int64.shaderImageInt64Atomics;
 	graphics.sampler_filter_minmax_enabled      = supported12.samplerFilterMinmax;
@@ -600,6 +654,11 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    vk::PhysicalDeviceMeshShaderFeaturesEXT {.taskShader = VK_TRUE, .meshShader = VK_TRUE},
 	    feedback_layout, feedback_dynamic, provoking_vertex, image_atomic_int64, maintenance8,
 	    shader_clock, conditional_rendering,
+	    vk::PhysicalDeviceFaultFeaturesEXT {
+	        .deviceFault = graphics.device_fault_enabled,
+	        .deviceFaultVendorBinary = graphics.device_fault_vendor_binary_enabled},
+	    vk::PhysicalDeviceDiagnosticsConfigFeaturesNV {
+	        .diagnosticsConfig = graphics.diagnostics_config_enabled},
 	    // The renderer only uses the Vulkan 1.3 core dynamic states, but RADV (Mesa 26.3) creates
 	    // its PS epilog cache only when this EXT feature is enabled and crashes in vkCmdDraw when
 	    // a depth- or stencil-writing fragment shader needs an epilog.
@@ -634,12 +693,35 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	if (!graphics.conditional_rendering_enabled) {
 		create.unlink<vk::PhysicalDeviceConditionalRenderingFeaturesEXT>();
 	}
+	if (!graphics.device_fault_enabled) {
+		create.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
+	}
+	if (!graphics.diagnostics_config_enabled) {
+		create.unlink<vk::PhysicalDeviceDiagnosticsConfigFeaturesNV>();
+	}
 	if (!extended_dynamic_state) {
 		create.unlink<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 	}
 
+	// VkDeviceDiagnosticsConfigCreateInfoNV extends VkDeviceCreateInfo itself. Attach it
+	// separately from the feature chain, and only when the driver reports support.
+	auto device_create_info = create.get();
+	vk::DeviceDiagnosticsConfigCreateInfoNV diagnostics_config_create {};
+	if (graphics.diagnostics_config_enabled) {
+		diagnostics_config_create.flags =
+		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableShaderDebugInfo |
+		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableResourceTracking |
+		    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableShaderErrorReporting;
+		if (graphics.device_diagnostic_checkpoints_enabled) {
+			diagnostics_config_create.flags |=
+			    vk::DeviceDiagnosticsConfigFlagBitsNV::eEnableAutomaticCheckpoints;
+		}
+		diagnostics_config_create.pNext = device_create_info.pNext;
+		device_create_info.pNext = &diagnostics_config_create;
+	}
+
 	vk::Device device = nullptr;
-	RequireVulkanSuccess(physical_device.createDevice(&create.get(), nullptr, &device),
+	RequireVulkanSuccess(physical_device.createDevice(&device_create_info, nullptr, &device),
 	                     "vkCreateDevice");
 	return device;
 }

@@ -1,9 +1,11 @@
-name: Build and Release KytyPS5
+# GTX (MAXWELL) of KytyPS5 fork release workflow; modified 2026-11-09. See FORK-NOTICE.md.
+name: Build and Release GTX (MAXWELL) of KytyPS5
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, gtx970-maxwell ]
+    tags: [ 'gtx-maxwell-*' ]
   pull_request:
 
 concurrency:
@@ -27,10 +29,16 @@ jobs:
         id: release_tag
         shell: bash
         run: |
-          echo "value=KytyPS5-$(date -u +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REPOSITORY" == "TamanGitUser/KytyPS5" &&
+                "$GITHUB_REF" == refs/tags/gtx-maxwell-* ]]; then
+            version="${GITHUB_REF_NAME#gtx-maxwell-}"
+            echo "value=GTX-MAXWELL-of-KytyPS5-${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=GTX-MAXWELL-of-KytyPS5-dev-$(date -u +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
 
   windows:
-    name: Build KytyPS5 (Windows)
+    name: Build GTX (MAXWELL) of KytyPS5 (Windows)
     needs: metadata
     runs-on: windows-2025
 
@@ -81,7 +89,67 @@ jobs:
           cache: true
 
       - name: Setup sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        continue-on-error: true
+
+      - name: Select compiler cache
+        shell: pwsh
+        run: |
+          $launcher = ""
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            $launcher = "sccache"
+            Write-Host "sccache is available; using the compiler cache."
+          } else {
+            Write-Host "sccache is unavailable; continuing without the optional compiler cache."
+          }
+          "KYTY_COMPILER_LAUNCHER=$launcher" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Download FFmpeg prebuilts
+        id: ffmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ffmpegCommit = (git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not determine the pinned FFmpeg commit."
+          }
+
+          $assetName = "ffmpeg-windows-x64.zip"
+          $url = "https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/$ffmpegCommit/$assetName"
+          $externalDirectory = Join-Path $PWD.Path "_Build/externals"
+          $ffmpegDirectory = Join-Path $externalDirectory "ffmpeg-$ffmpegCommit"
+          $archivePath = Join-Path $externalDirectory $assetName
+          New-Item -ItemType Directory -Force -Path $externalDirectory | Out-Null
+
+          # Retry transient GitHub release/CDN failures instead of relying on CMake's
+          # single-attempt file(DOWNLOAD).
+          & curl.exe --fail --show-error --location --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 300 --output $archivePath $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not download pinned FFmpeg package: $url"
+          }
+
+          if (Test-Path $ffmpegDirectory) {
+            Remove-Item -LiteralPath $ffmpegDirectory -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $ffmpegDirectory -Force
+          foreach ($requiredFile in @(
+            "include/libavcodec/avcodec.h",
+            "lib/avcodec.lib",
+            "lib/avformat.lib",
+            "lib/avutil.lib",
+            "lib/avfilter.lib",
+            "lib/swscale.lib",
+            "lib/swresample.lib"
+          )) {
+            if (!(Test-Path (Join-Path $ffmpegDirectory $requiredFile))) {
+              throw "FFmpeg package is incomplete; missing $requiredFile"
+            }
+          }
+
+          "dir=$ffmpegDirectory" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Verify toolchain
         shell: cmd
@@ -103,10 +171,11 @@ jobs:
             -DKYTY_BUILD_ORIGIN=%KYTY_BUILD_ORIGIN% ^
             -DKYTY_BUILD_REPOSITORY=%KYTY_BUILD_REPOSITORY% ^
             -DKYTY_RELEASE_TAG=${{ needs.metadata.outputs.release_tag }} ^
+            -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" ^
             -DCMAKE_C_COMPILER=clang-cl ^
             -DCMAKE_CXX_COMPILER=clang-cl ^
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache ^
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DCMAKE_C_COMPILER_LAUNCHER=%KYTY_COMPILER_LAUNCHER% ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=%KYTY_COMPILER_LAUNCHER% ^
             -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
 
       - name: Build
@@ -124,178 +193,32 @@ jobs:
       - name: Test
         shell: cmd
         run: |
-          ctest --test-dir _Build/windows --output-on-failure -R "^(audio_out2_port|ngs2_sampler|pad_haptics|controller_settings|host_input|ime_dialog|lru_cache|resource_tracking|scalar_provenance|resource_materialization|shader_vertex_metadata|archive_file|avplayer_file|virtual_memory_allocation|memory_tracker|page_manager|image_page_table|bit_array|build_flags|event_queue_lifetime|sync_on_address|save_data_memory|trophy_system|audio_out_timing|ajm_resample|png_enc|jpeg_dec|jpeg_enc|occlusion_queries|ces|save_data_dialog|psml)$"
+          ctest --test-dir _Build/windows --output-on-failure -R "^(audio_out2_port|ngs2_sampler|pad_haptics|controller_settings|host_input|ime_dialog|lru_cache|resource_tracking|scalar_provenance|resource_materialization|shader_vertex_metadata|archive_file|avplayer_file|virtual_memory_allocation|memory_tracker|page_manager|image_page_table|bit_array|build_flags|event_queue_lifetime|sync_on_address|save_data_memory|trophy_system|audio_out_timing|ajm_resample|png_enc|jpeg_dec|jpeg_enc|occlusion_queries|ces|save_data_dialog|psml|depth_texture_encoding)$"
 
       - name: Install
-        shell: cmd
+        shell: pwsh
         run: |
           cmake --install _Build/windows --prefix _Build/windows/install
+          Copy-Item LICENSE, FORK-NOTICE.md -Destination _Build/windows/install
+          Copy-Item LICENSES -Destination _Build/windows/install -Recurse -Force
+          $thirdPartyRoot = (Resolve-Path "3rdparty").Path
+          $licenseFiles = Get-ChildItem -Path $thirdPartyRoot -Recurse -File -Include "LICENSE*","COPYING*","NOTICE*"
+          foreach ($licenseFile in $licenseFiles) {
+            $relative = $licenseFile.FullName.Substring($thirdPartyRoot.Length).TrimStart('\')
+            $destination = Join-Path "_Build/windows/install/THIRD-PARTY-LICENSES" $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+            Copy-Item $licenseFile.FullName $destination -Force
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KytyPS5-Windows-x64
+          name: GTX-MAXWELL-of-KytyPS5-Windows-x64
           path: _Build/windows/install/**
           if-no-files-found: error
 
-  macos:
-    name: Build KytyPS5 (macOS)
-    needs: metadata
-    runs-on: macos-15
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Select Xcode 26
-        shell: bash
-        run: |
-          xcode_path="$(ls -d /Applications/Xcode_26*.app | tail -n 1)"
-          test -n "$xcode_path"
-          sudo xcode-select --switch "$xcode_path/Contents/Developer"
-          xcodebuild -version
-
-      - name: Install build dependencies
-        shell: bash
-        run: brew install glslang
-
-      - name: Install Qt 6.10.3
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: "6.10.3"
-          host: mac
-          target: desktop
-          arch: clang_64
-          cache: true
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: Verify toolchain
-        shell: bash
-        run: |
-          git --version
-          cmake --version
-          ninja --version
-          clang++ --version
-          glslangValidator --version
-          echo "Host architecture: $(uname -m)"
-          echo "QT_ROOT_DIR=$QT_ROOT_DIR"
-
-      - name: Configure
-        shell: bash
-        run: |
-          cmake -S . -B _Build/macos \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-            -DKYTY_BUILD_ORIGIN="$KYTY_BUILD_ORIGIN" \
-            -DKYTY_BUILD_REPOSITORY="$KYTY_BUILD_REPOSITORY" \
-            -DKYTY_RELEASE_TAG="${{ needs.metadata.outputs.release_tag }}" \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
-
-      - name: Build
-        shell: bash
-        run: |
-          cmake --build _Build/macos \
-            --target launcher audio_out2_port_tests ngs2_sampler_tests pad_haptics_tests controller_settings_tests host_input_tests ime_dialog_tests lru_cache_tests virtual_memory_allocation_tests \
-              memory_tracker_tests page_manager_tests shader_recompiler_compute_tests \
-              resource_tracking_tests scalar_provenance_tests \
-              resource_materialization_tests shader_vertex_metadata_tests archive_file_tests avplayer_file_tests \
-            --parallel
-
-      - name: Test
-        shell: bash
-        run: |
-          ctest --test-dir _Build/macos --output-on-failure \
-            -R '^(audio_out2_port|ngs2_sampler|pad_haptics|controller_settings|host_input|ime_dialog|lru_cache|memory_tracker|page_manager|resource_tracking|scalar_provenance|resource_materialization|shader_vertex_metadata|archive_file|avplayer_file|virtual_memory_allocation)$'
-
-      - name: Install
-        shell: bash
-        run: |
-          cmake --install _Build/macos --prefix _Build/macos/install
-
-      - name: Bundle MoltenVK
-        shell: bash
-        env:
-          MOLTENVK_VERSION: v1.4.2
-          MOLTENVK_SHA256: f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e
-        run: |
-          archive="$RUNNER_TEMP/MoltenVK-macos.tar"
-          package="$RUNNER_TEMP/MoltenVK"
-          install_dir="_Build/macos/install"
-          app_dir="$install_dir/KytyPS5.app"
-          moltenvk="$install_dir/libMoltenVK.dylib"
-          curl --fail --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK_VERSION/MoltenVK-macos.tar"
-          echo "$MOLTENVK_SHA256  $archive" | shasum -a 256 --check
-          tar -xf "$archive" -C "$RUNNER_TEMP"
-          test -d "$app_dir"
-          install -m 755 \
-            "$package/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib" \
-            "$moltenvk"
-          install -m 644 "$package/LICENSE" "$install_dir/LICENSE.MoltenVK"
-          codesign --force --sign - --timestamp=none "$moltenvk"
-          install -d -m 755 "$app_dir/Contents/Frameworks" "$app_dir/Contents/Resources"
-          install -m 755 "$moltenvk" "$app_dir/Contents/Frameworks/libMoltenVK.dylib"
-          install -m 644 "$package/LICENSE" "$app_dir/Contents/Resources/LICENSE.MoltenVK"
-          codesign --force --sign - --timestamp=none "$app_dir"
-
-      - name: Verify artifacts
-        shell: bash
-        run: |
-          install_dir="_Build/macos/install"
-          app_dir="$install_dir/KytyPS5.app"
-          test -d "$app_dir"
-          for binary in \
-            "$install_dir/kyty_emulator" \
-            "$install_dir/libMoltenVK.dylib" \
-            "$app_dir/Contents/MacOS/KytyPS5" \
-            "$app_dir/Contents/MacOS/kyty_emulator" \
-            "$app_dir/Contents/MacOS/kyty_updater" \
-            "$app_dir/Contents/Frameworks/libMoltenVK.dylib"; do
-            file "$binary"
-            lipo "$binary" -verify_arch x86_64
-          done
-          for binary in \
-            "$install_dir/kyty_emulator" \
-            "$install_dir/libMoltenVK.dylib" \
-            "$app_dir/Contents/MacOS/KytyPS5" \
-            "$app_dir/Contents/MacOS/kyty_emulator" \
-            "$app_dir/Contents/MacOS/kyty_updater" \
-            "$app_dir/Contents/Frameworks/libMoltenVK.dylib"; do
-            codesign --verify --strict "$binary"
-          done
-          codesign --verify --deep --strict --verbose=2 "$app_dir"
-
-      - name: Package macOS artifacts
-        shell: bash
-        run: |
-          install_dir="_Build/macos/install"
-          archive="$RUNNER_TEMP/KytyPS5-macOS-x86_64.zip"
-          (
-            cd "$install_dir"
-            zip -qry "$archive" .
-          )
-          unzip -t "$archive"
-
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: KytyPS5-macOS-x86_64
-          path: ${{ runner.temp }}/KytyPS5-macOS-x86_64.zip
-          if-no-files-found: error
-
   linux:
-    name: Build KytyPS5 (Linux)
+    name: Build GTX (MAXWELL) of KytyPS5 (Linux)
     needs: metadata
     runs-on: ubuntu-24.04
 
@@ -341,7 +264,55 @@ jobs:
           cache: true
 
       - name: Setup sccache
+        id: sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        continue-on-error: true
+
+      - name: Select compiler cache
+        shell: pwsh
+        run: |
+          $launcher = ""
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            $launcher = "sccache"
+            Write-Host "sccache is available; using the compiler cache."
+          } else {
+            Write-Host "sccache is unavailable; continuing without the optional compiler cache."
+          }
+          "KYTY_COMPILER_LAUNCHER=$launcher" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Download FFmpeg prebuilts
+        id: ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffmpeg_commit="$(git -C 3rdparty/ffmpeg-core rev-parse --short=12 HEAD)"
+          asset_name="ffmpeg-linux-x64.zip"
+          url="https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/${ffmpeg_commit}/${asset_name}"
+          external_directory="$GITHUB_WORKSPACE/_Build/externals"
+          ffmpeg_directory="$external_directory/ffmpeg-${ffmpeg_commit}"
+          archive_path="$external_directory/${asset_name}"
+          mkdir -p "$external_directory"
+
+          # Retry transient GitHub release/CDN failures instead of relying on CMake's
+          # single-attempt file(DOWNLOAD).
+          curl --fail --show-error --location --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 30 --max-time 300 "$url" --output "$archive_path"
+          rm -rf "$ffmpeg_directory"
+          mkdir -p "$ffmpeg_directory"
+          unzip -q "$archive_path" -d "$ffmpeg_directory"
+
+          for required_file in \
+            include/libavcodec/avcodec.h \
+            lib/libavcodec.a lib/libavformat.a lib/libavutil.a \
+            lib/libavfilter.a lib/libswscale.a lib/libswresample.a; do
+            test -f "$ffmpeg_directory/$required_file" || {
+              echo "FFmpeg package is incomplete; missing $required_file" >&2
+              exit 1
+            }
+          done
+
+          echo "dir=$ffmpeg_directory" >> "$GITHUB_OUTPUT"
 
       - name: Verify toolchain
         shell: bash
@@ -365,10 +336,11 @@ jobs:
             -DKYTY_BUILD_ORIGIN="$KYTY_BUILD_ORIGIN" \
             -DKYTY_BUILD_REPOSITORY="$KYTY_BUILD_REPOSITORY" \
             -DKYTY_RELEASE_TAG="${{ needs.metadata.outputs.release_tag }}" \
+            -DFFMPEG_PREBUILT_DIR="${{ steps.ffmpeg.outputs.dir }}" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_C_COMPILER_LAUNCHER="$KYTY_COMPILER_LAUNCHER" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER="$KYTY_COMPILER_LAUNCHER" \
             -DCMAKE_PREFIX_PATH="$Qt6_DIR" 2>&1 | tee _Build/configure.log
           exit "${PIPESTATUS[0]}"
 
@@ -406,6 +378,16 @@ jobs:
         shell: bash
         run: |
           cmake --install _Build/linux --prefix _Build/linux/install
+          cp LICENSE FORK-NOTICE.md _Build/linux/install/
+          cp -R LICENSES _Build/linux/install/
+          mkdir -p _Build/linux/install/THIRD-PARTY-LICENSES
+          find 3rdparty -type f \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print0 |
+            while IFS= read -r -d '' file; do
+              relative="${file#3rdparty/}"
+              destination="_Build/linux/install/THIRD-PARTY-LICENSES/$relative"
+              mkdir -p "$(dirname "$destination")"
+              cp "$file" "$destination"
+            done
 
       - name: Verify artifacts
         shell: bash
@@ -434,20 +416,30 @@ jobs:
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KytyPS5-Linux-x86_64
+          name: GTX-MAXWELL-of-KytyPS5-Linux-x86_64
           path: _Build/linux/install/**
           if-no-files-found: error
 
   release:
-    name: Release KytyPS5
+    name: Release GTX (MAXWELL) of KytyPS5
     if: >-
       always() &&
       github.event_name == 'push' &&
-      github.repository == 'KytyPS5/KytyPS5' &&
-      (needs.windows.result == 'success' ||
-       needs.macos.result == 'success' ||
-       needs.linux.result == 'success')
-    needs: [metadata, windows, macos, linux]
+      (
+        github.repository == 'KytyPS5/KytyPS5' ||
+        (
+          github.repository == 'TamanGitUser/KytyPS5' &&
+          startsWith(github.ref, 'refs/tags/gtx-maxwell-') &&
+          needs.windows.result == 'success' &&
+          needs.linux.result == 'success'
+        )
+      ) &&
+      (
+        github.repository == 'TamanGitUser/KytyPS5' ||
+        needs.windows.result == 'success' ||
+        needs.linux.result == 'success'
+      )
+    needs: [metadata, windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -455,51 +447,46 @@ jobs:
       RELEASE_NAME: ${{ needs.metadata.outputs.release_tag }}
 
     steps:
+      - name: Checkout exact release source (including submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Package complete corresponding source
+        shell: bash
+        run: |
+          tar --exclude='.git' -czf "$GITHUB_WORKSPACE/$RELEASE_NAME-Source.tar.gz" .
+
       - name: Download Windows build
         if: needs.windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: KytyPS5-Windows-x64
-          path: artifacts/KytyPS5-Windows-x64
-
-      - name: Download macOS build
-        if: needs.macos.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: KytyPS5-macOS-x86_64
-          path: artifacts/KytyPS5-macOS-x86_64
+          name: GTX-MAXWELL-of-KytyPS5-Windows-x64
+          path: artifacts/GTX-MAXWELL-of-KytyPS5-Windows-x64
 
       - name: Download Linux build
         if: needs.linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: KytyPS5-Linux-x86_64
-          path: artifacts/KytyPS5-Linux-x86_64
+          name: GTX-MAXWELL-of-KytyPS5-Linux-x86_64
+          path: artifacts/GTX-MAXWELL-of-KytyPS5-Linux-x86_64
 
       - name: Package Windows build
         if: needs.windows.result == 'success'
         shell: bash
         run: |
-          windows_dir="artifacts/KytyPS5-Windows-x64"
+          windows_dir="artifacts/GTX-MAXWELL-of-KytyPS5-Windows-x64"
           test -d "$windows_dir"
           (
             cd "$windows_dir"
             zip -r "$GITHUB_WORKSPACE/$RELEASE_NAME-Windows-x64.zip" .
           )
 
-      - name: Package macOS build
-        if: needs.macos.result == 'success'
-        shell: bash
-        run: |
-          macos_archive="artifacts/KytyPS5-macOS-x86_64/KytyPS5-macOS-x86_64.zip"
-          test -f "$macos_archive"
-          cp "$macos_archive" "$RELEASE_NAME-macOS-x86_64.zip"
-
       - name: Package Linux build
         if: needs.linux.result == 'success'
         shell: bash
         run: |
-          linux_dir="artifacts/KytyPS5-Linux-x86_64"
+          linux_dir="artifacts/GTX-MAXWELL-of-KytyPS5-Linux-x86_64"
           test -d "$linux_dir"
           chmod a+x \
             "$linux_dir/kyty_launcher" \
@@ -516,8 +503,8 @@ jobs:
           assets=()
           for artifact in \
             "$RELEASE_NAME-Windows-x64.zip" \
-            "$RELEASE_NAME-macOS-x86_64.zip" \
-            "$RELEASE_NAME-Linux-x86_64.tar.gz"; do
+            "$RELEASE_NAME-Linux-x86_64.tar.gz" \
+            "$RELEASE_NAME-Source.tar.gz"; do
             if [[ -f "$artifact" ]]; then
               assets+=("$artifact")
             fi
@@ -528,9 +515,12 @@ jobs:
               --clobber \
               --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_NAME" "${assets[@]}" \
-              --generate-notes \
+            release_flags=(--generate-notes)
+            if [[ "$GITHUB_REPOSITORY" == "TamanGitUser/KytyPS5" ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_NAME" "${assets[@]}" "${release_flags[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "$RELEASE_NAME"
+              --title "GTX (MAXWELL) of KytyPS5 ${RELEASE_NAME#GTX-MAXWELL-of-KytyPS5-}"
           fi
