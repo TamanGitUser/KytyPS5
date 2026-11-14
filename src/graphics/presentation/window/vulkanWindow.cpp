@@ -491,10 +491,12 @@ static vk::Device VulkanCreateDevice(GraphicContext&          graphics,
 	    diagnostics_requested ? "enabled" : "disabled",
 	    diagnostics_env_override ? "environment override" : "saved setting"));
 	const bool barycentric_supported = barycentric.fragmentShaderBarycentric == VK_TRUE;
+	graphics.fragment_shader_barycentric_enabled = barycentric_supported;
 	if (!barycentric_supported) {
 		Log::WriteToConsoleAndLog(
-		    "WARNING: Your GPU is not fully supported (fragmentShaderBarycentric is unavailable). "
-		    "Some games may render incorrectly or crash.\n");
+		    "WARNING: fragmentShaderBarycentric is unavailable. Shader translation will use "
+		    "standard interpolated inputs where possible and zero explicit barycentric built-ins; "
+		    "some shaders may render incorrectly.\n");
 	}
 	graphics.shader_image_int64_atomics_enabled = image_atomic_int64.shaderImageInt64Atomics;
 	graphics.sampler_filter_minmax_enabled      = supported12.samplerFilterMinmax;

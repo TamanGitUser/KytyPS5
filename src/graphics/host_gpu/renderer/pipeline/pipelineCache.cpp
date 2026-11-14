@@ -271,7 +271,8 @@ std::vector<vk::Format> VertexInputFormats(const ShaderVertexInputInfo&         
 ShaderRecompiler::Spirv::Profile SpirvProfile(const GraphicContext& graphics) {
 	// AMD GPUs (vendor 0x1002) run NMin/NMax as v_min/v_max, which give the guest's NaN and
 	// signed-zero results; GLSL.std.450 alone does not order -0 below +0.
-	return {.maintenance8           = graphics.maintenance8_enabled,
+	return {.fragment_barycentric   = graphics.fragment_shader_barycentric_enabled,
+	        .maintenance8           = graphics.maintenance8_enabled,
 	        .native_float_min_max   = graphics.physical_device_properties.vendorID == 0x1002u,
 	        .device_clock_period_ps = graphics.device_clock_period_ps,
 	        .robust_buffer_access   = graphics.robust_buffer_access_enabled,
