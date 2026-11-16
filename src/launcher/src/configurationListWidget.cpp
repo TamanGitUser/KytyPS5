@@ -21,6 +21,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
@@ -82,6 +83,45 @@ constexpr char CONF_ADDONS_DIR[]   = "addons_dir";
 constexpr char CONF_ADDCONT[]      = "AdditionalContent";
 constexpr char CONF_GLOBAL[]       = "GlobalConfiguration";
 constexpr char SAVE_DATA_DIR[]     = "_SaveData";
+
+static std::unique_ptr<QSettings> CreateLauncherSettings() {
+	const auto local_path = QDir::current().absoluteFilePath(CONF_FILE_NAME);
+	const QFileInfo local_file(local_path);
+	const QFileInfo working_directory(QDir::currentPath());
+
+	// Keep portable settings beside the launcher only when that location is writable.
+	// Installed launchers commonly live under Program Files, where a normal user cannot
+	// update Kyty.ini. In that case, use the per-user settings file instead.
+	if ((local_file.exists() && local_file.isWritable()) ||
+	    (!local_file.exists() && working_directory.isWritable())) {
+		return std::make_unique<QSettings>(local_path, QSettings::IniFormat);
+	}
+
+	// UserScope keeps game-specific configurations writable without administrator rights.
+	// QSettings still falls back to the legacy SystemScope file for existing installations.
+	auto settings = std::make_unique<QSettings>(QSettings::IniFormat, QSettings::UserScope,
+	                                            CONF_ORG_NAME, CONF_APP_NAME);
+
+	// Migrate a read-only portable Kyty.ini to UserScope once, preserving its settings.
+	if (local_file.exists()) {
+		settings->setFallbacksEnabled(false);
+		const bool has_user_settings = !settings->allKeys().isEmpty();
+		settings->setFallbacksEnabled(true);
+		if (!has_user_settings) {
+			QSettings portable(local_path, QSettings::IniFormat);
+			for (const auto& key: portable.allKeys()) {
+				settings->setValue(key, portable.value(key));
+			}
+			settings->sync();
+			if (settings->status() != QSettings::NoError) {
+				qWarning().noquote() << "Failed to migrate launcher settings to"
+				                    << settings->fileName();
+			}
+		}
+	}
+
+	return settings;
+}
 
 static QString NormalizeGameDirectory(const QString& dir) {
 	const auto trimmed = dir.trimmed();
@@ -325,19 +365,7 @@ void ConfigurationListWidget::UpdateToolbarIcons() {
 }
 
 void ConfigurationListWidget::WriteSettings() {
-	QFile                      file = QFile(QDir(".").absoluteFilePath(CONF_FILE_NAME));
-	std::unique_ptr<QSettings> s;
-	if (file.exists()) {
-		s = std::make_unique<QSettings>(CONF_FILE_NAME, QSettings::IniFormat);
-	} else {
-#ifdef __linux__
-		s = std::make_unique<QSettings>(QSettings::IniFormat, QSettings::UserScope, CONF_ORG_NAME,
-		                                CONF_APP_NAME);
-#else
-		s = std::make_unique<QSettings>(QSettings::IniFormat, QSettings::SystemScope, CONF_ORG_NAME,
-		                                CONF_APP_NAME);
-#endif
-	}
+	auto s = CreateLauncherSettings();
 
 	MainDialog::WriteSettings(*s);
 	ConfigurationEditDialog::WriteSettings(*s);
@@ -372,22 +400,15 @@ void ConfigurationListWidget::WriteSettings() {
 		it.value()->WriteSettings(s.get());
 	}
 	s->endArray();
+
+	s->sync();
+	if (s->status() != QSettings::NoError) {
+		qWarning().noquote() << "Failed to save launcher settings to" << s->fileName();
+	}
 }
 
 void ConfigurationListWidget::ReadSettings() {
-	QFile                      file = QFile(QDir(".").absoluteFilePath(CONF_FILE_NAME));
-	std::unique_ptr<QSettings> s;
-	if (file.exists()) {
-		s = std::make_unique<QSettings>(CONF_FILE_NAME, QSettings::IniFormat);
-	} else {
-#ifdef __linux__
-		s = std::make_unique<QSettings>(QSettings::IniFormat, QSettings::UserScope, CONF_ORG_NAME,
-		                                CONF_APP_NAME);
-#else
-		s = std::make_unique<QSettings>(QSettings::IniFormat, QSettings::SystemScope, CONF_ORG_NAME,
-		                                CONF_APP_NAME);
-#endif
-	}
+	auto s = CreateLauncherSettings();
 
 	m_settings_file = s->fileName();
 
