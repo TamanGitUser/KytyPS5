@@ -236,7 +236,7 @@
             </item>
             <item row="15" column="1">
              <widget class="QComboBox" name="comboBox_demons_souls_render_preset">
-              <property name="toolTip"><string>Auto keeps the game's original render resolution. Ultra Quality 2944x1656, Quality 2560x1440, Balanced 2304x1296 and Performance 1920x1080 are experimental 4K-output profiles. Available only with the exact verified eboot.</string></property>
+              <property name="toolTip"><string>Auto keeps the game's original render resolution. Quality 2560x1440 matches the game's baseline. Balanced 2304x1296 and Performance 1920x1080 reduce rendering work; Ultra Quality 2944x1656 is higher than baseline and may cost FPS. These are experimental 4K-output game render profiles, not an FSR algorithm switch, and require the exact verified eboot.</string></property>
               <item><property name="text"><string>Auto (game default)</string></property></item>
               <item><property name="text"><string>Ultra Quality — 2944x1656</string></property></item>
               <item><property name="text"><string>Quality — 2560x1440</string></property></item>
