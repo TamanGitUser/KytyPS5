@@ -129,6 +129,7 @@ public:
 	int                    anisotropy_override          = 0;
 	int                    texture_mip_bias_quarters    = 0;
 	int                    demons_souls_render_preset   = 0; // Auto, Ultra Quality, Quality, Balanced, Performance
+	int                    demons_souls_texture_reduce_levels = 0; // Off, drop 1 or 2 largest BC mips
 	bool                   trophy_enabled              = true;
 	int                    trophy_duration_seconds     = 6;
 	bool                   perf_overlay_enabled        = false;
@@ -182,6 +183,7 @@ public:
 		anisotropy_override          = other.anisotropy_override;
 		texture_mip_bias_quarters    = other.texture_mip_bias_quarters;
 		demons_souls_render_preset   = other.demons_souls_render_preset;
+		demons_souls_texture_reduce_levels = other.demons_souls_texture_reduce_levels;
 		trophy_enabled              = other.trophy_enabled;
 		trophy_duration_seconds     = other.trophy_duration_seconds;
 		perf_overlay_enabled        = other.perf_overlay_enabled;
