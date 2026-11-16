@@ -374,6 +374,13 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	render_preset->setEnabled(supports_demons_souls_render_profiles);
 	render_preset->setCurrentIndex(
 	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0);
+	auto* texture_reduce = m_ui->comboBox_demons_souls_texture_reduce_levels;
+	for (int index = 0; index < texture_reduce->count(); index++)
+		texture_reduce->setItemData(index, index);
+	m_ui->label_demons_souls_texture_reduce_levels->setEnabled(supports_demons_souls_render_profiles);
+	texture_reduce->setEnabled(supports_demons_souls_render_profiles);
+	texture_reduce->setCurrentIndex(
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_texture_reduce_levels, 2) : 0);
 	const bool fsr1_active = upscaler->currentData().toInt() == 1;
 	m_ui->label_fsr1_sharpness->setEnabled(fsr1_active);
 	m_ui->spinBox_fsr1_sharpness->setEnabled(fsr1_active);
@@ -640,6 +647,7 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.fsr1_enabled = ui.comboBox_upscaler->currentData().toInt() == 1;
 	info.fsr1_sharpness = ui.spinBox_fsr1_sharpness->value();
 	info.demons_souls_render_preset = ui.comboBox_demons_souls_render_preset->currentData().toInt();
+	info.demons_souls_texture_reduce_levels = ui.comboBox_demons_souls_texture_reduce_levels->currentData().toInt();
 	info.anisotropy_override = ui.comboBox_anisotropy_override->currentData().toInt();
 	info.texture_mip_bias_quarters = qRound(ui.doubleSpinBox_texture_mip_bias->value() * 4.0);
 	info.skip_notice_screen        = ui.checkBox_skip_notice_screen->isChecked();
