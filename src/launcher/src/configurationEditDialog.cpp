@@ -343,6 +343,18 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 		}
 	}
 	upscaler->setCurrentIndex(info.fsr1_enabled ? 1 : 0);
+	auto* render_preset = m_ui->comboBox_demons_souls_render_preset;
+	for (int index = 0; index < render_preset->count(); index++)
+		render_preset->setItemData(index, index);
+	const bool supports_demons_souls_render_profiles =
+	    info.title_id.compare(QStringLiteral("PPSA01341"), Qt::CaseInsensitive) == 0 &&
+	    info.gameVersion == QStringLiteral("01.007.000") &&
+	    QFileInfo(info.basedir).isDir() &&
+	    QFileInfo(QDir(info.basedir).filePath(info.elf)).isFile() &&
+	    QFileInfo(info.elf).fileName().compare(QStringLiteral("eboot.bin"), Qt::CaseInsensitive) == 0;
+	render_preset->setEnabled(supports_demons_souls_render_profiles);
+	render_preset->setCurrentIndex(
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0);
 	auto* anisotropy = m_ui->comboBox_anisotropy_override;
 	const QList<int> anisotropy_values {0, 1, 2, 4, 8, 16};
 	for (int index = 0; index < anisotropy_values.size(); index++)
@@ -604,6 +616,7 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.shader_cache_enabled      = ui.checkBox_shader_cache->isChecked();
 	info.nvidia_gpu_diagnostics_enabled = ui.checkBox_nvidia_gpu_diagnostics->isChecked();
 	info.fsr1_enabled = ui.comboBox_upscaler->currentData().toInt() == 1;
+	info.demons_souls_render_preset = ui.comboBox_demons_souls_render_preset->currentData().toInt();
 	info.anisotropy_override = ui.comboBox_anisotropy_override->currentData().toInt();
 	info.texture_mip_bias_quarters = qRound(ui.doubleSpinBox_texture_mip_bias->value() * 4.0);
 	info.skip_notice_screen        = ui.checkBox_skip_notice_screen->isChecked();
