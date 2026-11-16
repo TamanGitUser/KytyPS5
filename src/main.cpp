@@ -68,6 +68,7 @@ static void PrintUsage() {
 	::printf("  --shader-cache                       Keep compiled shaders and pipelines between boots.\n");
 	::printf("  --fsr1                               Enable AMD FSR 1 EASU for eligible SDR upscaling.\n");
 	::printf("  --fsr1-sharpness <0..100>            AMD FSR 1 RCAS sharpening strength (default: 50).\n");
+	::printf("  --demons-souls-render-height <720..2160>  16:9 3D render height; keeps 4K output (PPSA01341 01.007.000).\n");
 	::printf("  --anisotropy-override <value>        0=game, 1=off, 2/4/8/16=force.\n");
 	::printf("  --texture-mip-bias-quarter <-8..8>   Sampling mip bias in 0.25 mip steps.\n");
 	::printf("  --tessellation                      Draw tessellation patches; skipped by default.\n");
@@ -382,6 +383,14 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			if (!ParseUint32(value, options.config.fsr1_sharpness) ||
 			    options.config.fsr1_sharpness > 100) {
 				::printf("invalid FSR 1 sharpness: %s\n", value.c_str());
+				return false;
+			}
+		} else if (arg == "--demons-souls-render-height") {
+			if (!ParseUint32(value, options.config.demons_souls_render_height) ||
+			    (options.config.demons_souls_render_height != 0 &&
+			     (options.config.demons_souls_render_height < 720 ||
+			      options.config.demons_souls_render_height > 2160))) {
+				::printf("invalid Demon's Souls render height: %s\\n", value.c_str());
 				return false;
 			}
 		} else if (arg == "--vblank-frequency") {
