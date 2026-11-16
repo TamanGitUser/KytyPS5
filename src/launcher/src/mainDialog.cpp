@@ -282,7 +282,8 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	AddFlag(args, info.occlusion_queries_enabled, "--occlusion-queries");
 	AddFlag(args, info.relaxed_shader_float, "--relaxed-shader-float");
 	AddFlag(args, info.shader_cache_enabled, "--shader-cache");
-	AddFlag(args, info.fsr1_enabled, "--fsr1");
+	const int render_preset = qBound(0, info.demons_souls_render_preset, 4);
+	AddFlag(args, info.fsr1_enabled || render_preset != 0, "--fsr1");
 	args << "--fsr1-sharpness" << QString::number(info.fsr1_sharpness);
 	args << "--anisotropy-override" << QString::number(info.anisotropy_override);
 	args << "--texture-mip-bias-quarter" << QString::number(info.texture_mip_bias_quarters);
@@ -322,7 +323,6 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	}
 
 	static constexpr int render_heights[] {0, 1656, 1440, 1296, 1080};
-	const int render_preset = qBound(0, info.demons_souls_render_preset, 4);
 	args << "--demons-souls-render-height"
 	     << QString::number(render_heights[render_preset]);
 
