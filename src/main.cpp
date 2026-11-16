@@ -67,6 +67,7 @@ static void PrintUsage() {
 	::printf("  --shader-validation                  Enable shader validation.\n");
 	::printf("  --shader-cache                       Keep compiled shaders and pipelines between boots.\n");
 	::printf("  --fsr1                               Enable AMD FSR 1 EASU for eligible SDR upscaling.\n");
+	::printf("  --fsr1-sharpness <0..100>            AMD FSR 1 RCAS sharpening strength (default: 50).\n");
 	::printf("  --anisotropy-override <value>        0=game, 1=off, 2/4/8/16=force.\n");
 	::printf("  --texture-mip-bias-quarter <-8..8>   Sampling mip bias in 0.25 mip steps.\n");
 	::printf("  --tessellation                      Draw tessellation patches; skipped by default.\n");
@@ -377,6 +378,12 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			if (!ParseUint32(value, options.config.anisotropy_override) || (options.config.anisotropy_override != 0 && options.config.anisotropy_override != 1 && options.config.anisotropy_override != 2 && options.config.anisotropy_override != 4 && options.config.anisotropy_override != 8 && options.config.anisotropy_override != 16)) { ::printf("invalid anisotropy override: %s\n", value.c_str()); return false; }
 		} else if (arg == "--texture-mip-bias-quarter") {
 			if (!ParseInt32(value, options.config.texture_mip_bias_quarters) || options.config.texture_mip_bias_quarters < -8 || options.config.texture_mip_bias_quarters > 8) { ::printf("invalid texture mip bias: %s\n", value.c_str()); return false; }
+		} else if (arg == "--fsr1-sharpness") {
+			if (!ParseUint32(value, options.config.fsr1_sharpness) ||
+			    options.config.fsr1_sharpness > 100) {
+				::printf("invalid FSR 1 sharpness: %s\n", value.c_str());
+				return false;
+			}
 		} else if (arg == "--vblank-frequency") {
 			if (!ParseUint32(value, options.config.vblank_frequency)) {
 				::printf("invalid vblank frequency: %s\n", value.c_str());
