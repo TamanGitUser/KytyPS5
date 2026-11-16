@@ -303,11 +303,11 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	auto* upscaler = m_ui->comboBox_upscaler;
 	for (int index = 0; index < upscaler->count(); index++) upscaler->setItemData(index, index);
 	if (auto* model = qobject_cast<QStandardItemModel*>(upscaler->model())) {
-		for (int index: {1, 2, 3}) {
+		for (int index: {2, 3}) {
 			if (auto* item = model->item(index)) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
 		}
 	}
-	upscaler->setCurrentIndex(0);
+	upscaler->setCurrentIndex(info.fsr1_enabled ? 1 : 0);
 	auto* anisotropy = m_ui->comboBox_anisotropy_override;
 	const QList<int> anisotropy_values {0, 1, 2, 4, 8, 16};
 	for (int index = 0; index < anisotropy_values.size(); index++)
