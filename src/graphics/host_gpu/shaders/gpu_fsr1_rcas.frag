@@ -4,6 +4,8 @@
 layout(set = 0, binding = 0) uniform sampler2D fsr_input;
 layout(push_constant) uniform FsrRcasConstants {
     uvec4 con;
+    ivec2 output_offset;
+    uvec2 padding;
 } parameters;
 
 layout(location = 0) out vec4 output_color;
@@ -26,6 +28,7 @@ void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
 
 void main() {
     AF1 red, green, blue, alpha;
-    FsrRcasF(red, green, blue, alpha, uvec2(ivec2(gl_FragCoord.xy)), parameters.con);
+    uvec2 output_position = uvec2(ivec2(gl_FragCoord.xy) - parameters.output_offset);
+    FsrRcasF(red, green, blue, alpha, output_position, parameters.con);
     output_color = vec4(red, green, blue, alpha);
 }
