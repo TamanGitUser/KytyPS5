@@ -1,7 +1,6 @@
 #include "cheatFile.h"
 
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -9,7 +8,6 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QUuid>
 #include <QXmlStreamReader>
 
 extern "C" {
@@ -125,134 +123,6 @@ QString PlanPath(const QString& title_id) {
 	}
 	return QDir(QCoreApplication::applicationDirPath())
 	    .filePath(QStringLiteral("_Patches/%1.json").arg(title_id.trimmed().toUpper()));
-}
-
-QString BuildLaunchPlan(const QString& title_id, const QString& version, const QString& process,
-                        const QString& executable_path, int render_preset, QString* error) {
-	if (error != nullptr) {
-		error->clear();
-	}
-	const auto original_plan = PlanPath(title_id);
-	if (render_preset == 0) {
-		return original_plan;
-	}
-	const auto fail = [error](const QString& message) {
-		if (error != nullptr) {
-			*error = message;
-		}
-		return QString {};
-	};
-	// The instruction offsets below were verified for this one executable revision only.
-	if (title_id.compare(QStringLiteral("PPSA01341"), Qt::CaseInsensitive) != 0 ||
-	    version != QStringLiteral("01.007.000") ||
-	    QFileInfo(process).fileName().compare(QStringLiteral("eboot.bin"), Qt::CaseInsensitive) != 0 ||
-	    render_preset < 1 || render_preset > 4) {
-		return fail(Tr("The selected render profile is only supported by Demon's Souls PPSA01341 version 01.007.000."));
-	}
-
-	// Refuse to apply a build-specific patch to a different eboot, even if title and app version match.
-	QFile executable(executable_path);
-	if (!executable.open(QIODevice::ReadOnly)) {
-		return fail(Tr("Could not verify the Demon's Souls executable for the render profile."));
-	}
-	QCryptographicHash hash(QCryptographicHash::Sha256);
-	while (!executable.atEnd()) {
-		const auto chunk = executable.read(1024 * 1024);
-		if (chunk.isEmpty() && executable.error() != QFile::NoError) {
-			return fail(Tr("Could not read the Demon's Souls executable for render-profile verification."));
-		}
-		if (!chunk.isEmpty()) {
-			hash.addData(chunk);
-		}
-	}
-	const auto executable_hash = QString::fromLatin1(hash.result().toHex());
-	constexpr auto expected_hash = "d499226cdc4b074eb8ec72ac03ad469bb80f48e580164c08157e6fd0c608c2c5";
-	if (executable_hash != QLatin1String(expected_hash)) {
-		return fail(Tr("This render profile requires the verified Demon's Souls 01.007.000 eboot (SHA-256 mismatch). No game patch was generated."));
-	}
-
-	QJsonObject root;
-	QJsonArray mods;
-	if (QFileInfo::exists(original_plan)) {
-		QFile user_file(original_plan);
-		if (!user_file.open(QIODevice::ReadOnly)) {
-			return fail(Tr("Could not read your existing game-patch file."));
-		}
-		QJsonDocument document;
-		const auto parse_error = ParseDocument(user_file.readAll(), &document);
-		if (!parse_error.isEmpty()) {
-			return fail(Tr("Your existing game-patch file could not be merged: %1").arg(parse_error));
-		}
-		root = document.object();
-		if (root.value(QStringLiteral("id")).toString().compare(title_id, Qt::CaseInsensitive) != 0 ||
-		    root.value(QStringLiteral("version")).toString() != version ||
-		    root.value(QStringLiteral("process")).toString().compare(QFileInfo(process).fileName(),
-		                                                            Qt::CaseInsensitive) != 0) {
-			return fail(Tr("Your existing game-patch file targets a different game version or executable; it was left unchanged."));
-		}
-		mods = root.value(QStringLiteral("mods")).toArray();
-	} else {
-		root.insert(QStringLiteral("name"), QStringLiteral("Demon's Souls"));
-		root.insert(QStringLiteral("id"), title_id);
-		root.insert(QStringLiteral("version"), version);
-		root.insert(QStringLiteral("process"), QFileInfo(process).fileName());
-	}
-
-	// Remove only a previous generated GTX profile. All user-authored mods remain intact.
-	const auto generated_prefix = QStringLiteral("GTX (MAXWELL) DeS render resolution: ");
-	QJsonArray preserved_mods;
-	for (const auto& value: mods) {
-		const auto mod = value.toObject();
-		if (!mod.value(QStringLiteral("name")).toString().startsWith(generated_prefix)) {
-			preserved_mods.append(value);
-		}
-	}
-	mods = preserved_mods;
-
-	struct RenderPreset {
-		const char* name;
-		const char* render_pair;
-	};
-	static constexpr RenderPreset presets[] = {
-	    {"", ""},
-	    {"Ultra Quality 2944x1656", "800b000078060000"},
-	    {"Quality 2560x1440", "000a0000a0050000"},
-	    {"Balanced 2304x1296", "0009000010050000"},
-	    {"Performance 1920x1080", "8007000038040000"},
-	};
-	const auto& selected = presets[render_preset];
-	const auto write = [](const char* offset, const char* off, const char* on) {
-		return QJsonObject {{QStringLiteral("offset"), QString::fromLatin1(offset)},
-		                     {QStringLiteral("off"), QString::fromLatin1(off)},
-		                     {QStringLiteral("on"), QString::fromLatin1(on)}};
-	};
-	QJsonArray memory;
-	// The two control-flow patches and resolution pair are tied to the exact eboot SHA above.
-	memory.append(write("0x90a66d", "c5fb1005bba1be01eb30", "c5fb100dbba1be01eb08"));
-	memory.append(write("0x90b1d2", "c5fb10055696be01eb30", "c5fb100d5696be01eb08"));
-	memory.append(write("0x24f9550", "000a0000a0050000", selected.render_pair));
-	const QJsonObject generated_mod {
-	    {QStringLiteral("name"), generated_prefix + QLatin1String(selected.name)},
-	    {QStringLiteral("enabled"), true},
-	    {QStringLiteral("memory"), memory}};
-	mods.append(generated_mod);
-	root.insert(QStringLiteral("mods"), mods);
-
-	const auto launch_dir = QDir(QCoreApplication::applicationDirPath())
-	                            .filePath(QStringLiteral("_Patches/_runtime"));
-	if (!QDir().mkpath(launch_dir)) {
-		return fail(Tr("Could not create the temporary render-profile patch directory."));
-	}
-	const auto suffix = QUuid::createUuid().toString(QUuid::WithoutBraces);
-	const auto output_path = QDir(launch_dir).filePath(
-	    QStringLiteral("PPSA01341-01.007.000-render-%1-%2.json").arg(render_preset).arg(suffix));
-	QSaveFile output(output_path);
-	const auto data = QJsonDocument(root).toJson(QJsonDocument::Indented);
-	if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size() ||
-	    !output.commit()) {
-		return fail(Tr("Could not write the launch-only render-profile patch: %1").arg(output.errorString()));
-	}
-	return output_path;
 }
 
 QString ParseDocument(const QByteArray& data, QJsonDocument* document) {
