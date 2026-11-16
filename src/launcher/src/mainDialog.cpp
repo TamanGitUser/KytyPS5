@@ -332,6 +332,10 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	static constexpr int render_heights[] {0, 1656, 1440, 1296, 1080};
 	args << "--demons-souls-render-height"
 	     << QString::number(render_heights[render_preset]);
+	args << "--demons-souls-texture-reduce-levels"
+	     << QString::number(supports_demons_souls_render_profiles
+	                             ? qBound(0, info.demons_souls_texture_reduce_levels, 2)
+	                             : 0);
 
 	const auto patch_plan = Cheats::PlanPath(info.title_id);
 	if (!patch_plan.isEmpty() && QFileInfo::exists(patch_plan)) {
