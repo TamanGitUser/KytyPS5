@@ -444,16 +444,33 @@ bool TextureCache::HoldsImage(const ImageInfo& info) {
 	return false;
 }
 
-bool TextureCache::CanReduceMipRange(const ImageInfo& info) {
-	if (info.data.Empty() || info.data.size == 0 ||
-	    m_buffer_cache.IsRegionGpuModified(info.data.address, info.data.size) ||
-	    m_buffer_cache.IsRegionCpuModified(info.data.address, info.data.size)) {
+bool TextureCache::CanReduceMipRange(const ImageInfo& full, const ImageInfo& reduced) {
+	if (full.data.Empty() || full.data.size == 0 ||
+	    m_buffer_cache.IsRegionGpuModified(full.data.address, full.data.size) ||
+	    m_buffer_cache.IsRegionCpuModified(full.data.address, full.data.size)) {
 		return false;
 	}
 	std::scoped_lock lock {m_lock};
-	// Re-use an already-created reduced image through HoldsImage(). Creating a second overlapping
-	// image with a different mip layout is deliberately refused in this first implementation.
-	return FindImagesInRegion(info.data.address, info.data.size).empty();
+	for (const auto id: FindImagesInRegion(full.data.address, full.data.size)) {
+		const auto& image = m_slot_images[id];
+		// Reuse an exact previously-created reduced image. Any other overlapping image makes
+		// this range ambiguous (render targets, aliased images and other mip layouts are excluded).
+		const bool same_reduced =
+		    image.backing.image != nullptr && !image.depth_id &&
+		    SameBacking(image.info, reduced, true) && image.info.data == reduced.data &&
+		    image.info.extent == reduced.extent && image.info.resources == reduced.resources &&
+		    image.info.guest_format == reduced.guest_format;
+		if (same_reduced) {
+			if (image.IsGpuModified() || image.IsCpuDirty() || image.IsBufferModified() ||
+			    image.usage.render_target || image.usage.video_out ||
+			    image.binding.is_target || image.binding.shader_write) {
+				return false;
+			}
+			continue;
+		}
+		return false;
+	}
+	return true;
 }
 
 
