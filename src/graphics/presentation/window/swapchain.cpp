@@ -960,6 +960,13 @@ void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
 	                            m_fsr1_intermediate_extent.height != rect.extent.height ||
 	                            m_fsr1_intermediate.format != m_format;
 	if (extent_changed) {
+		// A previously submitted presentation may still sample this image. Serialize the
+		// rare resize path before destroying and reallocating its Vulkan image/view.
+		if (m_fsr1_intermediate.image != nullptr) {
+			Common::LockGuard queue_lock(graphics.queue_mutex);
+			RequireVulkanSuccess(graphics.queue.waitIdle(),
+			                     "wait for FSR1 intermediate image resize");
+		}
 		if (m_fsr1_intermediate_view != nullptr) {
 			device.destroyImageView(m_fsr1_intermediate_view, nullptr);
 			m_fsr1_intermediate_view = nullptr;
