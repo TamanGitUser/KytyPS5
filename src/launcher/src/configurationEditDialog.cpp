@@ -11,6 +11,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QStandardItemModel>
+#include <QSignalBlocker>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
@@ -171,21 +172,39 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
 		        m_ui->lineEdit_printf_file->setEnabled(log == Configuration::LogDirection::File);
 	        });
-	connect(m_ui->comboBox_texture_quality, &QComboBox::currentTextChanged, this,
-	        [this](const QString&) {
-		        const int quarter_steps = m_ui->comboBox_texture_quality->currentData().toInt();
-		        if (quarter_steps >= 0) {
-			        m_ui->doubleSpinBox_texture_mip_bias->setValue(quarter_steps / 4.0);
-		        }
+	connect(m_ui->comboBox_texture_quality, &QComboBox::currentIndexChanged, this,
+	        [this](int index) {
+		        // Texture profiles pair progressively coarser mip selection with lower
+		        // anisotropic-filtering cost. The Custom entry leaves both controls alone.
+		        static constexpr int mip_bias_quarters[] = {0, 2, 4, 8};
+		        static constexpr int anisotropy_values[] = {0, 0, 1, 1}; // 0=game, 1=off
+		        if (index < 0 || index >= 4) return;
+		        const QSignalBlocker block_bias(m_ui->doubleSpinBox_texture_mip_bias);
+		        const QSignalBlocker block_anisotropy(m_ui->comboBox_anisotropy_override);
+		        m_ui->doubleSpinBox_texture_mip_bias->setValue(mip_bias_quarters[index] / 4.0);
+		        m_ui->comboBox_anisotropy_override->setCurrentIndex(
+		            m_ui->comboBox_anisotropy_override->findData(anisotropy_values[index]));
 	        });
+	const auto select_matching_texture_profile = [this]() {
+		auto* quality = m_ui->comboBox_texture_quality;
+		const double bias = m_ui->doubleSpinBox_texture_mip_bias->value();
+		const int quarter_steps = qRound(bias * 4.0);
+		const bool exact_quarter_step = qAbs(bias - quarter_steps / 4.0) < 0.001;
+		const int anisotropy = m_ui->comboBox_anisotropy_override->currentData().toInt();
+		int preset = 4; // Custom
+		if (exact_quarter_step) {
+			if (quarter_steps == 0 && anisotropy == 0) preset = 0;
+			else if (quarter_steps == 2 && anisotropy == 0) preset = 1;
+			else if (quarter_steps == 4 && anisotropy == 1) preset = 2;
+			else if (quarter_steps == 8 && anisotropy == 1) preset = 3;
+		}
+		quality->setCurrentIndex(preset);
+	};
 	connect(m_ui->doubleSpinBox_texture_mip_bias,
-	        QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
-		        auto* quality = m_ui->comboBox_texture_quality;
-		        const int quarter_steps = qRound(value * 4.0);
-		        const bool exact_quarter_step = qAbs(value - quarter_steps / 4.0) < 0.001;
-		        const int preset_index = exact_quarter_step ? quality->findData(quarter_steps) : -1;
-		        quality->setCurrentIndex(preset_index >= 0 ? preset_index : 4);
-	        });
+	        QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+	        [select_matching_texture_profile](double) { select_matching_texture_profile(); });
+	connect(m_ui->comboBox_anisotropy_override, &QComboBox::currentIndexChanged, this,
+	        [select_matching_texture_profile](int) { select_matching_texture_profile(); });
 
 	setSizeGripEnabled(true);
 
@@ -334,8 +353,16 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	for (int index = 0; index < texture_quality_biases.size(); index++)
 		texture_quality->setItemData(index, texture_quality_biases[index]);
 	m_ui->doubleSpinBox_texture_mip_bias->setValue(info.texture_mip_bias_quarters / 4.0);
-	const int texture_quality_index = texture_quality->findData(info.texture_mip_bias_quarters);
-	texture_quality->setCurrentIndex(texture_quality_index >= 0 ? texture_quality_index : 4);
+	int texture_quality_index = 4; // Custom
+	if (info.texture_mip_bias_quarters == 0 && info.anisotropy_override == 0)
+		texture_quality_index = 0;
+	else if (info.texture_mip_bias_quarters == 2 && info.anisotropy_override == 0)
+		texture_quality_index = 1;
+	else if (info.texture_mip_bias_quarters == 4 && info.anisotropy_override == 1)
+		texture_quality_index = 2;
+	else if (info.texture_mip_bias_quarters == 8 && info.anisotropy_override == 1)
+		texture_quality_index = 3;
+	texture_quality->setCurrentIndex(texture_quality_index);
 	m_ui->checkBox_skip_notice_screen->setChecked(info.skip_notice_screen);
 	m_ui->checkBox_network_connected->setChecked(info.network_connected);
 	m_ui->checkBox_psn_emulation->setChecked(info.psn_emulation_enabled);
