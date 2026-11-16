@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "loader/demonsSoulsRenderSize.h"
 
+#include "common/assert.h"
 #include "common/emulatorConfig.h"
 #include "common/stringUtils.h"
 #include "graphics/host_gpu/hostMemory.h"
@@ -169,7 +170,7 @@ bool WriteVerifiedRanges(const std::array<uint64_t, 3>& addresses,
 		if (!Libs::LibKernel::Memory::ProtectGuestMemory(
 		        page, GuestPageSize, Common::VirtualMemory::Mode::ReadWrite, &original)) {
 			if (!restore()) {
-				EXIT("Demon's Souls render profile: failed to restore guest memory protection after a write-protection error\\n");
+				EXIT("Demon's Souls render profile: failed to restore guest memory protection after a write-protection error\n");
 			}
 			return false;
 		}
@@ -180,7 +181,7 @@ bool WriteVerifiedRanges(const std::array<uint64_t, 3>& addresses,
 		std::memcpy(reinterpret_cast<void*>(addresses[i]), values[i], sizes[i]);
 	}
 	if (!restore()) {
-		EXIT("Demon's Souls render profile: failed to restore original guest memory protection\\n");
+		EXIT("Demon's Souls render profile: failed to restore original guest memory protection\n");
 	}
 	return true;
 }
