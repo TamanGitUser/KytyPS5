@@ -43,6 +43,7 @@ QVariantMap Configuration::GameSettings() const {
 	KYTY_CFG_SET(fsr1_enabled);
 	KYTY_CFG_SET(anisotropy_override);
 	KYTY_CFG_SET(texture_mip_bias_quarters);
+	KYTY_CFG_SET(demons_souls_render_preset);
 	KYTY_CFG_SET(trophy_enabled);
 	KYTY_CFG_SET(trophy_duration_seconds);
 	KYTY_CFG_SET(perf_overlay_enabled);
@@ -111,6 +112,10 @@ void Configuration::ReadGameSettingsValues(const Settings& s) {
 		anisotropy_override = 0;
 	}
 	texture_mip_bias_quarters = qBound(-8, texture_mip_bias_quarters, 8);
+	demons_souls_render_preset = s.value("demons_souls_render_preset", 0).toInt();
+	if (demons_souls_render_preset < 0 || demons_souls_render_preset > 4) {
+		demons_souls_render_preset = 0;
+	}
 	trophy_enabled       = s.value("trophy_enabled", trophy_enabled).toBool();
 	KYTY_CFG_GET(trophy_duration_seconds);
 	KYTY_CFG_GET(perf_overlay_enabled);
@@ -201,6 +206,9 @@ bool Configuration::SetGameSettings(const QJsonObject& settings, QString& error)
 	}
 	if (texture_mip_bias_quarters < -8 || texture_mip_bias_quarters > 8) {
 		return fail(tr("Texture mip bias must be between -2.00 and +2.00."));
+	}
+	if (demons_souls_render_preset < 0 || demons_souls_render_preset > 4) {
+		return fail(tr("Demon's Souls render profile must be Auto, Ultra Quality, Quality, Balanced or Performance."));
 	}
 	if (vblank_frequency < 30 || vblank_frequency > 360) {
 		return fail(tr("Vblank frequency must be between 30 and 360."));
