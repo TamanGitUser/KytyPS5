@@ -49,8 +49,10 @@ static_assert(sizeof(FsrEasuParameters) == 80);
 
 struct alignas(16) FsrRcasParameters {
 	uint32_t con[4] {};
+	int32_t output_offset[2] {};
+	uint32_t padding[2] {};
 };
-static_assert(sizeof(FsrRcasParameters) == 16);
+static_assert(sizeof(FsrRcasParameters) == 32);
 
 struct Presenter::Frame {
 	VulkanImage   image;
@@ -1045,6 +1047,8 @@ void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
 	const float sharpness_stops =
 	    (100.0f - static_cast<float>(Config::GetFsr1Sharpness())) * (4.0f / 100.0f);
 	FsrRcasCon(rcas.con, sharpness_stops);
+	rcas.output_offset[0] = rect.offset.x;
+	rcas.output_offset[1] = rect.offset.y;
 	const vk::DescriptorImageInfo upscaled_image {
 	    m_fsr1_sampler, m_fsr1_intermediate_view, vk::ImageLayout::eShaderReadOnlyOptimal};
 	vk::WriteDescriptorSet upscaled_write {};
