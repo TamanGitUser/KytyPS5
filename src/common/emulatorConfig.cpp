@@ -30,6 +30,8 @@ void Load(const ConfigOptions& cfg) {
 	EXIT_IF(cfg.anisotropy_override != 0 && cfg.anisotropy_override != 1 && cfg.anisotropy_override != 2 && cfg.anisotropy_override != 4 && cfg.anisotropy_override != 8 && cfg.anisotropy_override != 16);
 	EXIT_IF(cfg.texture_mip_bias_quarters < -8 || cfg.texture_mip_bias_quarters > 8);
 	EXIT_IF(cfg.fsr1_sharpness > 100);
+	EXIT_IF(cfg.demons_souls_render_height != 0 &&
+	        (cfg.demons_souls_render_height < 720 || cfg.demons_souls_render_height > 2160));
 
 	*g_config = cfg;
 	Common::DebugCounters::SetEnabled(cfg.perf_overlay_enabled);
@@ -146,6 +148,7 @@ bool NvidiaGpuDiagnosticsEnabled() {
 
 bool Fsr1Enabled() { return g_config->fsr1_enabled; }
 uint32_t GetFsr1Sharpness() { return g_config->fsr1_sharpness; }
+uint32_t GetDemonsSoulsRenderHeight() { return g_config->demons_souls_render_height; }
 uint32_t GetAnisotropyOverride() { return g_config->anisotropy_override; }
 int32_t GetTextureMipBiasQuarters() { return g_config->texture_mip_bias_quarters; }
 float GetTextureMipBias() { return static_cast<float>(g_config->texture_mip_bias_quarters) / 4.0f; }
