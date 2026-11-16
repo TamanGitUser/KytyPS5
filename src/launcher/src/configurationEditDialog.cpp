@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDir>
@@ -170,6 +171,21 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
 		        m_ui->lineEdit_printf_file->setEnabled(log == Configuration::LogDirection::File);
 	        });
+	connect(m_ui->comboBox_texture_quality, &QComboBox::currentTextChanged, this,
+	        [this](const QString&) {
+		        const int quarter_steps = m_ui->comboBox_texture_quality->currentData().toInt();
+		        if (quarter_steps >= 0) {
+			        m_ui->doubleSpinBox_texture_mip_bias->setValue(quarter_steps / 4.0);
+		        }
+	        });
+	connect(m_ui->doubleSpinBox_texture_mip_bias,
+	        QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+		        auto* quality = m_ui->comboBox_texture_quality;
+		        const int quarter_steps = qRound(value * 4.0);
+		        const bool exact_quarter_step = qAbs(value - quarter_steps / 4.0) < 0.001;
+		        const int preset_index = exact_quarter_step ? quality->findData(quarter_steps) : -1;
+		        quality->setCurrentIndex(preset_index >= 0 ? preset_index : 4);
+	        });
 
 	setSizeGripEnabled(true);
 
@@ -313,7 +329,13 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	for (int index = 0; index < anisotropy_values.size(); index++)
 		anisotropy->setItemData(index, anisotropy_values[index]);
 	anisotropy->setCurrentIndex(qMax(0, anisotropy->findData(info.anisotropy_override)));
+	auto* texture_quality = m_ui->comboBox_texture_quality;
+	const QList<int> texture_quality_biases {0, 2, 4, 8, -1};
+	for (int index = 0; index < texture_quality_biases.size(); index++)
+		texture_quality->setItemData(index, texture_quality_biases[index]);
 	m_ui->doubleSpinBox_texture_mip_bias->setValue(info.texture_mip_bias_quarters / 4.0);
+	const int texture_quality_index = texture_quality->findData(info.texture_mip_bias_quarters);
+	texture_quality->setCurrentIndex(texture_quality_index >= 0 ? texture_quality_index : 4);
 	m_ui->checkBox_skip_notice_screen->setChecked(info.skip_notice_screen);
 	m_ui->checkBox_network_connected->setChecked(info.network_connected);
 	m_ui->checkBox_psn_emulation->setChecked(info.psn_emulation_enabled);
