@@ -169,7 +169,22 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	    records.size() >= header.size() && std::ranges::equal(records.first(header.size()), header);
 	if (reusable) {
 		records = records.subspan(header.size());
+		const size_t record_bytes = records.size();
+		const size_t report_step = std::max<size_t>(1, record_bytes / 10);
+		size_t       next_report = report_step;
+		size_t       loaded_records = 0;
 		while (LoadRecord(records)) {
+			++loaded_records;
+			const size_t loaded_bytes = record_bytes - records.size();
+			if (loaded_bytes >= next_report || records.empty()) {
+				const auto percent = record_bytes == 0 ? 100u : static_cast<unsigned>(
+				    (100.0 * static_cast<double>(loaded_bytes)) / static_cast<double>(record_bytes));
+				Log::WriteToConsoleAndLog(fmt::format(
+				    "Shader cache: read {} records, {}% ({:.1f}/{:.1f} MB)\\n", loaded_records,
+				    percent, static_cast<double>(loaded_bytes) / 1'000'000.0,
+				    static_cast<double>(record_bytes) / 1'000'000.0));
+				next_report = loaded_bytes + report_step;
+			}
 		}
 	}
 	// A damaged record ends the store; the records before it stay.
@@ -192,8 +207,15 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 		}
 	}
 	if (serial) {
-		for (auto& job: jobs) {
-			job();
+		const size_t report_step = std::max<size_t>(1, (jobs.size() + 9) / 10);
+		for (size_t i = 0; i < jobs.size(); ++i) {
+			jobs[i]();
+			const size_t completed = i + 1;
+			if (completed % report_step == 0 || completed == jobs.size()) {
+				Log::WriteToConsoleAndLog(fmt::format(
+				    "Shader cache: compiled {} / {} pipeline jobs ({}%)\\n", completed,
+				    jobs.size(), completed * 100 / jobs.size()));
+			}
 		}
 	} else {
 		Common::ParallelFor(jobs.size(), [&](size_t i) { jobs[i](); });
