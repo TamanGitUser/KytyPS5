@@ -10,6 +10,11 @@ namespace Cheats {
 
 [[nodiscard]] bool    IsSupportedTitleId(const QString& title_id);
 [[nodiscard]] QString PlanPath(const QString& title_id);
+// Creates a separate launch-only plan for an exact, hash-verified Demon's Souls executable.
+// Existing user cheats are preserved; the user's original patch file is never modified.
+[[nodiscard]] QString BuildLaunchPlan(const QString& title_id, const QString& version,
+                                      const QString& process, const QString& executable_path,
+                                      int render_preset, QString* error);
 // Replaces MC4 (encrypted) or SHN trainer XML with the equivalent cheat JSON.
 [[nodiscard]] QString ConvertTrainer(QByteArray* data, bool encrypted);
 
