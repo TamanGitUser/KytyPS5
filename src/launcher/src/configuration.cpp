@@ -41,6 +41,7 @@ QVariantMap Configuration::GameSettings() const {
 	KYTY_CFG_SET(shader_cache_enabled);
 	KYTY_CFG_SET(nvidia_gpu_diagnostics_enabled);
 	KYTY_CFG_SET(fsr1_enabled);
+	KYTY_CFG_SET(fsr1_sharpness);
 	KYTY_CFG_SET(anisotropy_override);
 	KYTY_CFG_SET(texture_mip_bias_quarters);
 	KYTY_CFG_SET(demons_souls_render_preset);
@@ -105,6 +106,8 @@ void Configuration::ReadGameSettingsValues(const Settings& s) {
 	nvidia_gpu_diagnostics_enabled =
 	    s.value("nvidia_gpu_diagnostics_enabled", nvidia_gpu_diagnostics_enabled).toBool();
 	KYTY_CFG_GET(fsr1_enabled);
+	fsr1_sharpness = s.value("fsr1_sharpness", fsr1_sharpness).toInt();
+	if (fsr1_sharpness < 0 || fsr1_sharpness > 100) fsr1_sharpness = 50;
 	anisotropy_override = s.value("anisotropy_override", anisotropy_override).toInt();
 	texture_mip_bias_quarters = s.value("texture_mip_bias_quarters", texture_mip_bias_quarters).toInt();
 	if (anisotropy_override != 0 && anisotropy_override != 1 && anisotropy_override != 2 &&
@@ -206,6 +209,9 @@ bool Configuration::SetGameSettings(const QJsonObject& settings, QString& error)
 	}
 	if (texture_mip_bias_quarters < -8 || texture_mip_bias_quarters > 8) {
 		return fail(tr("Texture mip bias must be between -2.00 and +2.00."));
+	}
+	if (fsr1_sharpness < 0 || fsr1_sharpness > 100) {
+		return fail(tr("FSR 1 sharpening must be between 0 and 100."));
 	}
 	if (demons_souls_render_preset < 0 || demons_souls_render_preset > 4) {
 		return fail(tr("Demon's Souls render profile must be Auto, Ultra Quality, Quality, Balanced or Performance."));
