@@ -77,6 +77,7 @@ struct ConfigOptions {
 	bool                   shader_cache_enabled        = false;
 	bool                   nvidia_gpu_diagnostics_enabled = true;
 	bool                   fsr1_enabled                 = false;
+	uint32_t               fsr1_sharpness               = 50;
 	uint32_t               anisotropy_override          = 0;
 	int32_t                texture_mip_bias_quarters    = 0;
 	LogDirection           shader_log_direction        = LogDirection::Silent;
@@ -145,6 +146,7 @@ uint32_t GetConsoleLanguage();
 bool     VulkanValidationEnabled();
 bool     NvidiaGpuDiagnosticsEnabled();
 bool     Fsr1Enabled();
+uint32_t GetFsr1Sharpness();
 uint32_t GetAnisotropyOverride();
 int32_t  GetTextureMipBiasQuarters();
 float    GetTextureMipBias();
