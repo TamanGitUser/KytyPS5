@@ -8,6 +8,8 @@
 #include "loader/guestCode.h"
 #include "loader/runtimeLinker.h"
 #include "loader/systemContent.h"
+#include "common/virtualMemory.h"
+#include "kernel/memory.h"
 
 #include <algorithm>
 #include <array>
@@ -126,6 +128,63 @@ bool IsSupportedGame(const Program& program) {
 	       Common::EqualNoCase(title_id, "PPSA01341") && version == "01.007.000";
 }
 
+bool WriteVerifiedRanges(const std::array<uint64_t, 3>& addresses,
+                         const std::array<const void*, 3>& values,
+                         const std::array<size_t, 3>& sizes) {
+	constexpr uint64_t GuestPageSize = 0x4000;
+	struct Protection {
+		uint64_t address;
+		Common::VirtualMemory::Mode original;
+	};
+	std::vector<uint64_t> pages;
+	for (size_t i = 0; i < addresses.size(); ++i) {
+		if (addresses[i] == 0 || values[i] == nullptr || sizes[i] == 0 ||
+		    addresses[i] > UINT64_MAX - sizes[i]) {
+			return false;
+		}
+		const uint64_t first = addresses[i] & ~(GuestPageSize - 1u);
+		const uint64_t last  = (addresses[i] + sizes[i] - 1u) & ~(GuestPageSize - 1u);
+		for (uint64_t page = first;; page += GuestPageSize) {
+			if (std::find(pages.begin(), pages.end(), page) == pages.end()) {
+				pages.push_back(page);
+			}
+			if (page == last) break;
+			if (page > UINT64_MAX - GuestPageSize) return false;
+		}
+	}
+	std::sort(pages.begin(), pages.end());
+
+	std::vector<Protection> protections;
+	protections.reserve(pages.size());
+	const auto restore = [&]() {
+		bool ok = true;
+		for (auto it = protections.rbegin(); it != protections.rend(); ++it) {
+			ok &= Libs::LibKernel::Memory::ProtectGuestMemory(
+			    it->address, GuestPageSize, it->original, nullptr);
+		}
+		return ok;
+	};
+	for (const auto page: pages) {
+		Common::VirtualMemory::Mode original = Common::VirtualMemory::Mode::NoAccess;
+		if (!Libs::LibKernel::Memory::ProtectGuestMemory(
+		        page, GuestPageSize, Common::VirtualMemory::Mode::ReadWrite, &original)) {
+			if (!restore()) {
+				EXIT("Demon's Souls render profile: failed to restore guest memory protection after a write-protection error\\n");
+			}
+			return false;
+		}
+		protections.push_back({page, original});
+	}
+
+	for (size_t i = 0; i < addresses.size(); ++i) {
+		std::memcpy(reinterpret_cast<void*>(addresses[i]), values[i], sizes[i]);
+	}
+	if (!restore()) {
+		EXIT("Demon's Souls render profile: failed to restore original guest memory protection\\n");
+	}
+	return true;
+}
+
 } // namespace
 
 void Install(Program* program) {
@@ -156,12 +215,18 @@ void Install(Program* program) {
 	                   8u;
 	const std::array<uint32_t, 2> pair {width, requested_height};
 
-	// All signatures and expected original values have been verified before making any writes.
-	std::memcpy(reinterpret_cast<void*>(*render_constant), pair.data(), sizeof(pair));
-	std::memcpy(reinterpret_cast<void*>(*widths + PerformanceModeIndex * sizeof(uint32_t)),
-	            &width, sizeof(width));
-	std::memcpy(reinterpret_cast<void*>(*heights + PerformanceModeIndex * sizeof(uint32_t)),
-	            &requested_height, sizeof(requested_height));
+	// All signatures and original values are verified before making any writes. The
+	// mode tables may be in read-only ELF segments, so temporarily make only their
+	// containing 16 KiB guest pages writable and restore each original protection.
+	const std::array<uint64_t, 3> addresses {
+	    *render_constant, *widths + PerformanceModeIndex * sizeof(uint32_t),
+	    *heights + PerformanceModeIndex * sizeof(uint32_t)};
+	const std::array<const void*, 3> values {pair.data(), &width, &requested_height};
+	const std::array<size_t, 3> sizes {sizeof(pair), sizeof(width), sizeof(requested_height)};
+	if (!WriteVerifiedRanges(addresses, values, sizes)) {
+		std::printf("Demon's Souls render profile: could not temporarily protect verified render data; defaults kept\\n");
+		return;
+	}
 
 	std::printf("Demon's Souls render profile: 3D %ux%u (mode 3) with 3840x2160 game output; "
 	            "TAA and output-resolution effects remain enabled\n",
