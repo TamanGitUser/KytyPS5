@@ -36,14 +36,15 @@
 
 namespace Libs::Graphics {
 
-struct FsrEasuParameters {
+struct alignas(16) FsrEasuParameters {
 	uint32_t con0[4] {};
 	uint32_t con1[4] {};
 	uint32_t con2[4] {};
 	uint32_t con3[4] {};
 	int32_t output_offset[2] {};
+	uint32_t padding[2] {};
 };
-static_assert(sizeof(FsrEasuParameters) == 72);
+static_assert(sizeof(FsrEasuParameters) == 80);
 
 struct Presenter::Frame {
 	VulkanImage   image;
