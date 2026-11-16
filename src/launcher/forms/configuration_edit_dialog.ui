@@ -306,6 +306,20 @@
               <property name="value"><double>0.000000000000000</double></property>
              </widget>
             </item>
+            <item row="20" column="0">
+             <widget class="QLabel" name="label_demons_souls_texture_reduce_levels">
+              <property name="toolTip"><string>Experimental texture-memory reduction for PPSA01341 01.007.000 only. The emulator checks the game streamer signature and omits the same largest mip levels from eligible large, single-layer, block-compressed 2D textures in both game streaming and host GPU allocation. Render targets, storage/depth textures, arrays and unsupported formats are not reduced. Some distant or small texture detail may look softer.</string></property>
+              <property name="text"><string>Texture VRAM reduction:</string></property>
+             </widget>
+            </item>
+            <item row="20" column="1">
+             <widget class="QComboBox" name="comboBox_demons_souls_texture_reduce_levels">
+              <property name="toolTip"><string>Off is the safe default. Drop 1 largest BC mip or Drop 2 largest BC mips can reduce host VRAM allocation for eligible large textures. Only the exact PPSA01341 01.007.000 build is supported; if the runtime signature does not match, reduction remains off.</string></property>
+              <item><property name="text"><string>Off</string></property></item>
+              <item><property name="text"><string>Drop 1 largest BC mip</string></property></item>
+              <item><property name="text"><string>Drop 2 largest BC mips</string></property></item>
+             </widget>
+            </item>
            </layout>
           </widget>
          </item>
