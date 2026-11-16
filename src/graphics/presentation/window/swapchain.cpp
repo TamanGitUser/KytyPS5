@@ -956,54 +956,53 @@ void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
 	}
 
 	const bool use_easu = frame.image.extent.width < rect.extent.width ||
-		                      frame.image.extent.height < rect.extent.height;
-		if (use_easu) {
+	                      frame.image.extent.height < rect.extent.height;
+	if (use_easu) {
 		const bool extent_changed = m_fsr1_intermediate.image == nullptr ||
 		                            m_fsr1_intermediate_extent.width != rect.extent.width ||
 		                            m_fsr1_intermediate_extent.height != rect.extent.height ||
 		                            m_fsr1_intermediate.format != m_format;
 		if (extent_changed) {
-		// A previously submitted presentation may still sample this image. Serialize the
-		// rare resize path before destroying and reallocating its Vulkan image/view.
-		if (m_fsr1_intermediate.image != nullptr) {
-			Common::LockGuard queue_lock(graphics.queue_mutex);
-			RequireVulkanSuccess(graphics.queue.waitIdle(),
-			                     "wait for FSR1 intermediate image resize");
+			// A previously submitted presentation may still sample this image. Serialize the
+			// rare resize path before destroying and reallocating its Vulkan image/view.
+			if (m_fsr1_intermediate.image != nullptr) {
+				Common::LockGuard queue_lock(graphics.queue_mutex);
+				RequireVulkanSuccess(graphics.queue.waitIdle(),
+				                     "wait for FSR1 intermediate image resize");
+			}
+			if (m_fsr1_intermediate_view != nullptr) {
+				device.destroyImageView(m_fsr1_intermediate_view, nullptr);
+				m_fsr1_intermediate_view = nullptr;
+			}
+			if (m_fsr1_intermediate.image != nullptr) {
+				graphics.DeleteImage(m_fsr1_intermediate);
+			}
+			vk::ImageCreateInfo image_info {};
+			image_info.imageType = vk::ImageType::e2D;
+			image_info.extent = {rect.extent.width, rect.extent.height, 1};
+			image_info.mipLevels = 1;
+			image_info.arrayLayers = 1;
+			image_info.format = m_format;
+			image_info.tiling = vk::ImageTiling::eOptimal;
+			image_info.usage = vk::ImageUsageFlagBits::eColorAttachment |
+			                   vk::ImageUsageFlagBits::eSampled;
+			image_info.sharingMode = vk::SharingMode::eExclusive;
+			image_info.samples = vk::SampleCountFlagBits::e1;
+			image_info.initialLayout = vk::ImageLayout::eUndefined;
+			if (!graphics.CreateImage(image_info, m_fsr1_intermediate)) {
+				EXIT("failed to allocate FSR1 intermediate image, extent=%ux%u format=%d\\n",
+				     rect.extent.width, rect.extent.height, static_cast<int>(m_format));
+			}
+			vk::ImageViewCreateInfo view {};
+			view.image = m_fsr1_intermediate.image;
+			view.viewType = vk::ImageViewType::e2D;
+			view.format = m_format;
+			view.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+			RequireVulkanSuccess(
+			    device.createImageView(&view, nullptr, &m_fsr1_intermediate_view),
+			    "create FSR1 intermediate image view");
+			m_fsr1_intermediate_extent = rect.extent;
 		}
-		if (m_fsr1_intermediate_view != nullptr) {
-			device.destroyImageView(m_fsr1_intermediate_view, nullptr);
-			m_fsr1_intermediate_view = nullptr;
-		}
-		if (m_fsr1_intermediate.image != nullptr) {
-			graphics.DeleteImage(m_fsr1_intermediate);
-		}
-		vk::ImageCreateInfo image_info {};
-		image_info.imageType = vk::ImageType::e2D;
-		image_info.extent = {rect.extent.width, rect.extent.height, 1};
-		image_info.mipLevels = 1;
-		image_info.arrayLayers = 1;
-		image_info.format = m_format;
-		image_info.tiling = vk::ImageTiling::eOptimal;
-		image_info.usage = vk::ImageUsageFlagBits::eColorAttachment |
-		                   vk::ImageUsageFlagBits::eSampled;
-		image_info.sharingMode = vk::SharingMode::eExclusive;
-		image_info.samples = vk::SampleCountFlagBits::e1;
-		image_info.initialLayout = vk::ImageLayout::eUndefined;
-		if (!graphics.CreateImage(image_info, m_fsr1_intermediate)) {
-			EXIT("failed to allocate FSR1 intermediate image, extent=%ux%u format=%d\\n",
-			     rect.extent.width, rect.extent.height, static_cast<int>(m_format));
-		}
-		vk::ImageViewCreateInfo view {};
-		view.image = m_fsr1_intermediate.image;
-		view.viewType = vk::ImageViewType::e2D;
-		view.format = m_format;
-		view.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-		RequireVulkanSuccess(
-		    device.createImageView(&view, nullptr, &m_fsr1_intermediate_view),
-		    "create FSR1 intermediate image view");
-		m_fsr1_intermediate_extent = rect.extent;
-		}
-
 	}
 
 	if (use_easu) {
