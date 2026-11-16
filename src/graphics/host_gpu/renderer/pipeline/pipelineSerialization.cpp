@@ -180,7 +180,7 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 				const auto percent = record_bytes == 0 ? 100u : static_cast<unsigned>(
 				    (100.0 * static_cast<double>(loaded_bytes)) / static_cast<double>(record_bytes));
 				Log::WriteToConsoleAndLog(fmt::format(
-				    "Shader cache: read {} records, {}% ({:.1f}/{:.1f} MB)\\n", loaded_records,
+				    "Shader cache: read {} records, {}% ({:.1f}/{:.1f} MB)\n", loaded_records,
 				    percent, static_cast<double>(loaded_bytes) / 1'000'000.0,
 				    static_cast<double>(record_bytes) / 1'000'000.0));
 				next_report = loaded_bytes + report_step;
@@ -213,7 +213,7 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 			const size_t completed = i + 1;
 			if (completed % report_step == 0 || completed == jobs.size()) {
 				Log::WriteToConsoleAndLog(fmt::format(
-				    "Shader cache: compiled {} / {} pipeline jobs ({}%)\\n", completed,
+				    "Shader cache: compiled {} / {} pipeline jobs ({}%)\n", completed,
 				    jobs.size(), completed * 100 / jobs.size()));
 			}
 		}
