@@ -40,6 +40,9 @@ QVariantMap Configuration::GameSettings() const {
 	KYTY_CFG_SET(relaxed_shader_float);
 	KYTY_CFG_SET(shader_cache_enabled);
 	KYTY_CFG_SET(nvidia_gpu_diagnostics_enabled);
+	KYTY_CFG_SET(fsr1_enabled);
+	KYTY_CFG_SET(anisotropy_override);
+	KYTY_CFG_SET(texture_mip_bias_quarters);
 	KYTY_CFG_SET(trophy_enabled);
 	KYTY_CFG_SET(trophy_duration_seconds);
 	KYTY_CFG_SET(perf_overlay_enabled);
@@ -100,6 +103,14 @@ void Configuration::ReadGameSettingsValues(const Settings& s) {
 	shader_cache_enabled = s.value("shader_cache_enabled", shader_cache_enabled).toBool();
 	nvidia_gpu_diagnostics_enabled =
 	    s.value("nvidia_gpu_diagnostics_enabled", nvidia_gpu_diagnostics_enabled).toBool();
+	KYTY_CFG_GET(fsr1_enabled);
+	anisotropy_override = s.value("anisotropy_override", anisotropy_override).toInt();
+	texture_mip_bias_quarters = s.value("texture_mip_bias_quarters", texture_mip_bias_quarters).toInt();
+	if (anisotropy_override != 0 && anisotropy_override != 1 && anisotropy_override != 2 &&
+	    anisotropy_override != 4 && anisotropy_override != 8 && anisotropy_override != 16) {
+		anisotropy_override = 0;
+	}
+	texture_mip_bias_quarters = qBound(-8, texture_mip_bias_quarters, 8);
 	trophy_enabled       = s.value("trophy_enabled", trophy_enabled).toBool();
 	KYTY_CFG_GET(trophy_duration_seconds);
 	KYTY_CFG_GET(perf_overlay_enabled);
@@ -183,6 +194,13 @@ bool Configuration::SetGameSettings(const QJsonObject& settings, QString& error)
 	}
 	if (gpu_index < -1) {
 		return fail(tr("GPU index must be -1 or greater."));
+	}
+	if (anisotropy_override != 0 && anisotropy_override != 1 && anisotropy_override != 2 &&
+	    anisotropy_override != 4 && anisotropy_override != 8 && anisotropy_override != 16) {
+		return fail(tr("Anisotropy override must be Game default, Off, 2x, 4x, 8x or 16x."));
+	}
+	if (texture_mip_bias_quarters < -8 || texture_mip_bias_quarters > 8) {
+		return fail(tr("Texture mip bias must be between -2.00 and +2.00."));
 	}
 	if (vblank_frequency < 30 || vblank_frequency > 360) {
 		return fail(tr("Vblank frequency must be between 30 and 360."));

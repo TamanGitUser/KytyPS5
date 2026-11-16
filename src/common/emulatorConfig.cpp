@@ -27,6 +27,8 @@ void Load(const ConfigOptions& cfg) {
 	EXIT_IF(!IsConfiguredUserIdValid(cfg.user_id));
 	EXIT_IF(cfg.controller_speaker_volume > 100 || cfg.controller_vibration_intensity > 100);
 	EXIT_IF(cfg.keyboard_player > static_cast<uint32_t>(MAX_PLAYERS));
+	EXIT_IF(cfg.anisotropy_override != 0 && cfg.anisotropy_override != 1 && cfg.anisotropy_override != 2 && cfg.anisotropy_override != 4 && cfg.anisotropy_override != 8 && cfg.anisotropy_override != 16);
+	EXIT_IF(cfg.texture_mip_bias_quarters < -8 || cfg.texture_mip_bias_quarters > 8);
 
 	*g_config = cfg;
 	Common::DebugCounters::SetEnabled(cfg.perf_overlay_enabled);
@@ -140,6 +142,11 @@ bool VulkanValidationEnabled() {
 bool NvidiaGpuDiagnosticsEnabled() {
 	return g_config->nvidia_gpu_diagnostics_enabled;
 }
+
+bool Fsr1Enabled() { return g_config->fsr1_enabled; }
+uint32_t GetAnisotropyOverride() { return g_config->anisotropy_override; }
+int32_t GetTextureMipBiasQuarters() { return g_config->texture_mip_bias_quarters; }
+float GetTextureMipBias() { return static_cast<float>(g_config->texture_mip_bias_quarters) / 4.0f; }
 
 bool IsNetworkConnected() {
 	return g_config->network_connected;

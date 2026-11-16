@@ -282,6 +282,9 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	AddFlag(args, info.occlusion_queries_enabled, "--occlusion-queries");
 	AddFlag(args, info.relaxed_shader_float, "--relaxed-shader-float");
 	AddFlag(args, info.shader_cache_enabled, "--shader-cache");
+	AddFlag(args, info.fsr1_enabled, "--fsr1");
+	args << "--anisotropy-override" << QString::number(info.anisotropy_override);
+	args << "--texture-mip-bias-quarter" << QString::number(info.texture_mip_bias_quarters);
 	AddFlag(args, !info.nvidia_gpu_diagnostics_enabled, "--no-nvidia-gpu-diagnostics");
 	args << "--vblank-frequency" << QString::number(info.vblank_frequency);
 	args << "--console-language" << QString::number(info.console_language);

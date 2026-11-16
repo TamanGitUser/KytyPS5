@@ -66,6 +66,9 @@ static void PrintUsage() {
 	         "                                       Implies --vulkan-validation; very slow.\n");
 	::printf("  --shader-validation                  Enable shader validation.\n");
 	::printf("  --shader-cache                       Keep compiled shaders and pipelines between boots.\n");
+	::printf("  --fsr1                               Enable AMD FSR 1 EASU for eligible SDR upscaling.\n");
+	::printf("  --anisotropy-override <value>        0=game, 1=off, 2/4/8/16=force.\n");
+	::printf("  --texture-mip-bias-quarter <-8..8>   Sampling mip bias in 0.25 mip steps.\n");
 	::printf("  --tessellation                      Draw tessellation patches; skipped by default.\n");
 	::printf("  --occlusion-queries                  Count occlusion query samples on the GPU.\n");
 	::printf("  --relaxed-shader-float               Native GPU float ops in shaders; faster, can be inaccurate.\n");
@@ -199,6 +202,7 @@ static constexpr Flag FLAGS[] = {
     {"--gpu-assisted-validation", &ConfigOptions::gpu_assisted_validation_enabled},
     {"--shader-validation", &ConfigOptions::shader_validation_enabled},
     {"--shader-cache", &ConfigOptions::shader_cache_enabled},
+    {"--fsr1", &ConfigOptions::fsr1_enabled},
     {"--tessellation", &ConfigOptions::tessellation_enabled},
     {"--occlusion-queries", &ConfigOptions::occlusion_queries_enabled},
     {"--relaxed-shader-float", &ConfigOptions::relaxed_shader_float},
@@ -368,10 +372,11 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 				return false;
 			}
 		} else if (arg == "--gpu") {
-			if (!ParseInt32(value, options.config.gpu_index)) {
-				::printf("invalid gpu index: %s\n", value.c_str());
-				return false;
-			}
+			if (!ParseInt32(value, options.config.gpu_index)) { ::printf("invalid gpu index: %s\n", value.c_str()); return false; }
+		} else if (arg == "--anisotropy-override") {
+			if (!ParseUint32(value, options.config.anisotropy_override) || (options.config.anisotropy_override != 0 && options.config.anisotropy_override != 1 && options.config.anisotropy_override != 2 && options.config.anisotropy_override != 4 && options.config.anisotropy_override != 8 && options.config.anisotropy_override != 16)) { ::printf("invalid anisotropy override: %s\n", value.c_str()); return false; }
+		} else if (arg == "--texture-mip-bias-quarter") {
+			if (!ParseInt32(value, options.config.texture_mip_bias_quarters) || options.config.texture_mip_bias_quarters < -8 || options.config.texture_mip_bias_quarters > 8) { ::printf("invalid texture mip bias: %s\n", value.c_str()); return false; }
 		} else if (arg == "--vblank-frequency") {
 			if (!ParseUint32(value, options.config.vblank_frequency)) {
 				::printf("invalid vblank frequency: %s\n", value.c_str());

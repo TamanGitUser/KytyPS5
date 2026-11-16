@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
@@ -299,6 +300,20 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	m_ui->checkBox_relaxed_shader_float->setChecked(info.relaxed_shader_float);
 	m_ui->checkBox_shader_cache->setChecked(info.shader_cache_enabled);
 	m_ui->checkBox_nvidia_gpu_diagnostics->setChecked(info.nvidia_gpu_diagnostics_enabled);
+	auto* upscaler = m_ui->comboBox_upscaler;
+	for (int index = 0; index < upscaler->count(); index++) upscaler->setItemData(index, index);
+	if (auto* model = qobject_cast<QStandardItemModel*>(upscaler->model())) {
+		for (int index: {2, 3}) {
+			if (auto* item = model->item(index)) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+		}
+	}
+	upscaler->setCurrentIndex(info.fsr1_enabled ? 1 : 0);
+	auto* anisotropy = m_ui->comboBox_anisotropy_override;
+	const QList<int> anisotropy_values {0, 1, 2, 4, 8, 16};
+	for (int index = 0; index < anisotropy_values.size(); index++)
+		anisotropy->setItemData(index, anisotropy_values[index]);
+	anisotropy->setCurrentIndex(qMax(0, anisotropy->findData(info.anisotropy_override)));
+	m_ui->doubleSpinBox_texture_mip_bias->setValue(info.texture_mip_bias_quarters / 4.0);
 	m_ui->checkBox_skip_notice_screen->setChecked(info.skip_notice_screen);
 	m_ui->checkBox_network_connected->setChecked(info.network_connected);
 	m_ui->checkBox_psn_emulation->setChecked(info.psn_emulation_enabled);
@@ -539,6 +554,9 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.relaxed_shader_float      = ui.checkBox_relaxed_shader_float->isChecked();
 	info.shader_cache_enabled      = ui.checkBox_shader_cache->isChecked();
 	info.nvidia_gpu_diagnostics_enabled = ui.checkBox_nvidia_gpu_diagnostics->isChecked();
+	info.fsr1_enabled = ui.comboBox_upscaler->currentData().toInt() == 1;
+	info.anisotropy_override = ui.comboBox_anisotropy_override->currentData().toInt();
+	info.texture_mip_bias_quarters = qRound(ui.doubleSpinBox_texture_mip_bias->value() * 4.0);
 	info.skip_notice_screen        = ui.checkBox_skip_notice_screen->isChecked();
 	info.network_connected         = ui.checkBox_network_connected->isChecked();
 	info.psn_emulation_enabled     = ui.checkBox_psn_emulation->isChecked();

@@ -216,6 +216,48 @@
               <property name="checked"><bool>true</bool></property>
              </widget>
             </item>
+            <item row="14" column="0">
+             <widget class="QLabel" name="label_upscaler"><property name="text"><string>Spatial upscaler:</string></property></widget>
+            </item>
+            <item row="14" column="1">
+             <widget class="QComboBox" name="comboBox_upscaler">
+              <property name="toolTip"><string>FSR 1 EASU is for SDR presentation upscaling only. It does not change the game's internal render resolution. FSR 2/3 require temporal inputs not yet exposed by the emulator.</string></property>
+              <item><property name="text"><string>Off (linear blit)</string></property></item>
+              <item><property name="text"><string>AMD FSR 1 (EASU)</string></property></item>
+              <item><property name="text"><string>AMD FSR 2 (unavailable)</string></property></item>
+              <item><property name="text"><string>AMD FSR 3.1 (unavailable)</string></property></item>
+             </widget>
+            </item>
+            <item row="15" column="0">
+             <widget class="QLabel" name="label_anisotropy_override"><property name="text"><string>Anisotropic filtering:</string></property></widget>
+            </item>
+            <item row="15" column="1">
+             <widget class="QComboBox" name="comboBox_anisotropy_override">
+              <property name="toolTip"><string>Game default preserves original game sampler state. Force Off or 2x-16x anisotropy for texture sampling.</string></property>
+              <item><property name="text"><string>Game default</string></property></item>
+              <item><property name="text"><string>Off</string></property></item>
+              <item><property name="text"><string>2x</string></property></item>
+              <item><property name="text"><string>4x</string></property></item>
+              <item><property name="text"><string>8x</string></property></item>
+              <item><property name="text"><string>16x</string></property></item>
+             </widget>
+            </item>
+            <item row="16" column="0">
+             <widget class="QLabel" name="label_texture_mip_bias">
+              <property name="toolTip"><string>Positive values select lower-resolution mip levels; this affects sampling/bandwidth, not allocated VRAM.</string></property>
+              <property name="text"><string>Texture mip bias:</string></property>
+             </widget>
+            </item>
+            <item row="16" column="1">
+             <widget class="QDoubleSpinBox" name="doubleSpinBox_texture_mip_bias">
+              <property name="toolTip"><string>Positive values may reduce texture sampling bandwidth, but do not free texture memory.</string></property>
+              <property name="decimals"><number>2</number></property>
+              <property name="minimum"><double>-2.000000000000000</double></property>
+              <property name="maximum"><double>2.000000000000000</double></property>
+              <property name="singleStep"><double>0.250000000000000</double></property>
+              <property name="value"><double>0.000000000000000</double></property>
+             </widget>
+            </item>
            </layout>
           </widget>
          </item>
