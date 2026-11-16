@@ -160,10 +160,21 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 		m_ui->label_controller_volume_value->setText(tr("%1%").arg(value));
 	});
 	connect(m_ui->comboBox_upscaler, &QComboBox::currentIndexChanged, this, [this](int index) {
+		auto* render_preset = m_ui->comboBox_demons_souls_render_preset;
+		if (index != 1 && render_preset->currentData().toInt() != 0) {
+			const QSignalBlocker block(render_preset);
+			render_preset->setCurrentIndex(0);
+		}
 		const bool enabled = index == 1;
 		m_ui->label_fsr1_sharpness->setEnabled(enabled);
 		m_ui->spinBox_fsr1_sharpness->setEnabled(enabled);
 	});
+	connect(m_ui->comboBox_demons_souls_render_preset, &QComboBox::currentIndexChanged,
+	        this, [this](int index) {
+		        if (index > 0 && m_ui->comboBox_upscaler->currentData().toInt() != 1) {
+			        m_ui->comboBox_upscaler->setCurrentIndex(1);
+		        }
+	        });
 	connect(m_ui->comboBox_shader_log_direction, &QComboBox::currentTextChanged, this,
 	        [this](const QString& text) {
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
@@ -363,6 +374,9 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	render_preset->setEnabled(supports_demons_souls_render_profiles);
 	render_preset->setCurrentIndex(
 	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0);
+	const bool fsr1_active = upscaler->currentData().toInt() == 1;
+	m_ui->label_fsr1_sharpness->setEnabled(fsr1_active);
+	m_ui->spinBox_fsr1_sharpness->setEnabled(fsr1_active);
 	auto* anisotropy = m_ui->comboBox_anisotropy_override;
 	const QList<int> anisotropy_values {0, 1, 2, 4, 8, 16};
 	for (int index = 0; index < anisotropy_values.size(); index++)
