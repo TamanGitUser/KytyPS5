@@ -38,7 +38,7 @@
          <property name="verticalSpacing">
           <number>8</number>
          </property>
-         <item row="0" column="0">
+         <item row="18" column="0">
           <widget class="QGroupBox" name="user_profile_group">
            <property name="title">
             <string>User profile</string>
