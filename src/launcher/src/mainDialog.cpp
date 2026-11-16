@@ -329,7 +329,7 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 		args << "--addcont" << entry;
 	}
 
-	static constexpr int render_heights[] {0, 1656, 1440, 1296, 1080};
+	static constexpr int render_heights[] {0, 1656, 1440, 1272, 1080};
 	args << "--demons-souls-render-height"
 	     << QString::number(render_heights[render_preset]);
 	args << "--demons-souls-texture-reduce-levels"
