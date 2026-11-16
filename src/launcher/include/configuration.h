@@ -125,6 +125,7 @@ public:
 	bool                   shader_cache_enabled        = true;
 	bool                   nvidia_gpu_diagnostics_enabled = true;
 	bool                   fsr1_enabled                 = false;
+	int                    fsr1_sharpness               = 50; // 0-100, maximum AMD RCAS sharpness at 100
 	int                    anisotropy_override          = 0;
 	int                    texture_mip_bias_quarters    = 0;
 	int                    demons_souls_render_preset   = 0; // Auto, Ultra Quality, Quality, Balanced, Performance
@@ -177,6 +178,7 @@ public:
 		shader_cache_enabled        = other.shader_cache_enabled;
 		nvidia_gpu_diagnostics_enabled = other.nvidia_gpu_diagnostics_enabled;
 		fsr1_enabled                 = other.fsr1_enabled;
+		fsr1_sharpness               = other.fsr1_sharpness;
 		anisotropy_override          = other.anisotropy_override;
 		texture_mip_bias_quarters    = other.texture_mip_bias_quarters;
 		demons_souls_render_preset   = other.demons_souls_render_preset;
