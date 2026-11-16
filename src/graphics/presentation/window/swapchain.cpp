@@ -7,6 +7,7 @@
 #include "common/threads.h"
 #include "gpu_blit_shaders/gpu_blit_fs_triangle_spv.h"
 #include "gpu_blit_shaders/gpu_video_out_overlay_spv.h"
+#include "gpu_blit_shaders/gpu_fsr1_easu_spv.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
@@ -26,9 +27,23 @@
 #include <vector>
 #include <vulkan/vk_platform.h>
 
+#define A_CPU 1
+#include "graphics/host_gpu/shaders/ffx_a.h"
+#include "graphics/host_gpu/shaders/ffx_fsr1.h"
+#undef A_CPU
+
 // IWYU pragma: no_include <intrin.h>
 
 namespace Libs::Graphics {
+
+struct FsrEasuParameters {
+	uint32_t con0[4] {};
+	uint32_t con1[4] {};
+	uint32_t con2[4] {};
+	uint32_t con3[4] {};
+	int32_t output_offset[2] {};
+};
+static_assert(sizeof(FsrEasuParameters) == 72);
 
 struct Presenter::Frame {
 	VulkanImage   image;
@@ -263,6 +278,7 @@ private:
 	void Destroy();
 	void DrawLayer(vk::CommandBuffer command, const Presenter::Layer& layer,
 	               const vk::Rect2D& rect);
+	void DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame, const vk::Rect2D& rect);
 
 	WindowContext&   m_window;
 	vk::SwapchainKHR m_handle = nullptr;
@@ -283,6 +299,10 @@ private:
 	vk::PipelineLayout             m_overlay_layout      = nullptr;
 	vk::Pipeline                   m_overlay_pipeline    = nullptr;
 	vk::Sampler                    m_overlay_sampler     = nullptr;
+	vk::DescriptorSetLayout        m_fsr1_descriptors     = nullptr;
+	vk::PipelineLayout             m_fsr1_layout          = nullptr;
+	vk::Pipeline                   m_fsr1_pipeline        = nullptr;
+	vk::Sampler                    m_fsr1_sampler         = nullptr;
 	uint32_t                       m_image_index         = 0;
 	uint32_t                       m_frame_index         = 0;
 };
@@ -511,10 +531,18 @@ void Swapchain::Destroy() {
 	graphics.device.destroyPipelineLayout(m_overlay_layout, nullptr);
 	graphics.device.destroyDescriptorSetLayout(m_overlay_descriptors, nullptr);
 	graphics.device.destroySampler(m_overlay_sampler, nullptr);
+	graphics.device.destroyPipeline(m_fsr1_pipeline, nullptr);
+	graphics.device.destroyPipelineLayout(m_fsr1_layout, nullptr);
+	graphics.device.destroyDescriptorSetLayout(m_fsr1_descriptors, nullptr);
+	graphics.device.destroySampler(m_fsr1_sampler, nullptr);
 	m_overlay_pipeline    = nullptr;
 	m_overlay_layout      = nullptr;
 	m_overlay_descriptors = nullptr;
 	m_overlay_sampler     = nullptr;
+	m_fsr1_descriptors     = nullptr;
+	m_fsr1_layout          = nullptr;
+	m_fsr1_pipeline        = nullptr;
+	m_fsr1_sampler         = nullptr;
 
 	for (const auto semaphore: m_image_acquired) {
 		if (semaphore != nullptr) {
@@ -751,18 +779,171 @@ void Swapchain::DrawLayer(vk::CommandBuffer command, const Presenter::Layer& lay
 	command.endRendering();
 }
 
+
+void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
+                         const vk::Rect2D& rect) {
+	auto device = m_window.graphic_ctx.device;
+	if (m_fsr1_pipeline == nullptr) {
+		vk::SamplerCreateInfo sampler {};
+		sampler.magFilter = vk::Filter::eLinear;
+		sampler.minFilter = vk::Filter::eLinear;
+		sampler.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+		sampler.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+		sampler.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+		RequireVulkanSuccess(device.createSampler(&sampler, nullptr, &m_fsr1_sampler),
+		                     "create FSR1 sampler");
+
+		const vk::DescriptorSetLayoutBinding binding {
+		    0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment};
+		vk::DescriptorSetLayoutCreateInfo descriptors {};
+		descriptors.flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR;
+		descriptors.bindingCount = 1;
+		descriptors.pBindings = &binding;
+		RequireVulkanSuccess(
+		    device.createDescriptorSetLayout(&descriptors, nullptr, &m_fsr1_descriptors),
+		    "create FSR1 descriptor layout");
+
+		const vk::PushConstantRange constants {
+		    vk::ShaderStageFlagBits::eFragment, 0, sizeof(FsrEasuParameters)};
+		vk::PipelineLayoutCreateInfo layout {};
+		layout.setLayoutCount = 1;
+		layout.pSetLayouts = &m_fsr1_descriptors;
+		layout.pushConstantRangeCount = 1;
+		layout.pPushConstantRanges = &constants;
+		RequireVulkanSuccess(device.createPipelineLayout(&layout, nullptr, &m_fsr1_layout),
+		                     "create FSR1 pipeline layout");
+
+		const auto vertex = CompileSPV(GPU_BLIT_FS_TRIANGLE_SPV, device);
+		const auto fragment = CompileSPV(GPU_FSR1_EASU_SPV, device);
+		std::array<vk::PipelineShaderStageCreateInfo, 2> stages {};
+		stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+		stages[0].module = vertex;
+		stages[0].pName = "main";
+		stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+		stages[1].module = fragment;
+		stages[1].pName = "main";
+
+		vk::PipelineVertexInputStateCreateInfo vertex_input {};
+		vk::PipelineInputAssemblyStateCreateInfo assembly {};
+		assembly.topology = vk::PrimitiveTopology::eTriangleList;
+		vk::PipelineViewportStateCreateInfo viewport {};
+		viewport.viewportCount = 1;
+		viewport.scissorCount = 1;
+		vk::PipelineRasterizationStateCreateInfo rasterization {};
+		rasterization.lineWidth = 1.0f;
+		vk::PipelineMultisampleStateCreateInfo multisample {};
+		multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+		vk::PipelineColorBlendAttachmentState attachment {};
+		attachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
+		                            vk::ColorComponentFlagBits::eG |
+		                            vk::ColorComponentFlagBits::eB |
+		                            vk::ColorComponentFlagBits::eA;
+		vk::PipelineColorBlendStateCreateInfo blend {};
+		blend.attachmentCount = 1;
+		blend.pAttachments = &attachment;
+		const std::array dynamic_states {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+		vk::PipelineDynamicStateCreateInfo dynamic {};
+		dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+		dynamic.pDynamicStates = dynamic_states.data();
+		vk::PipelineRenderingCreateInfo rendering {};
+		rendering.colorAttachmentCount = 1;
+		rendering.pColorAttachmentFormats = &m_format;
+		vk::GraphicsPipelineCreateInfo create {};
+		create.pNext = &rendering;
+		create.stageCount = static_cast<uint32_t>(stages.size());
+		create.pStages = stages.data();
+		create.pVertexInputState = &vertex_input;
+		create.pInputAssemblyState = &assembly;
+		create.pViewportState = &viewport;
+		create.pRasterizationState = &rasterization;
+		create.pMultisampleState = &multisample;
+		create.pColorBlendState = &blend;
+		create.pDynamicState = &dynamic;
+		create.layout = m_fsr1_layout;
+		RequireVulkanSuccess(
+		    device.createGraphicsPipelines(nullptr, 1, &create, nullptr, &m_fsr1_pipeline),
+		    "create FSR1 EASU pipeline");
+		device.destroyShaderModule(fragment, nullptr);
+		device.destroyShaderModule(vertex, nullptr);
+	}
+
+	if (frame.view == nullptr) {
+		vk::ImageViewCreateInfo view {};
+		view.image = frame.image.image;
+		view.viewType = vk::ImageViewType::e2D;
+		view.format = frame.image.format;
+		view.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+		RequireVulkanSuccess(device.createImageView(&view, nullptr, &frame.view),
+		                     "create FSR1 source image view");
+	}
+
+	FsrEasuParameters parameters {};
+	FsrEasuCon(parameters.con0, parameters.con1, parameters.con2, parameters.con3,
+	           static_cast<float>(frame.image.extent.width),
+	           static_cast<float>(frame.image.extent.height),
+	           static_cast<float>(frame.image.extent.width),
+	           static_cast<float>(frame.image.extent.height),
+	           static_cast<float>(rect.extent.width),
+	           static_cast<float>(rect.extent.height));
+	parameters.output_offset[0] = rect.offset.x;
+	parameters.output_offset[1] = rect.offset.y;
+
+	const vk::DescriptorImageInfo image {
+	    m_fsr1_sampler, frame.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+	vk::WriteDescriptorSet write {};
+	write.dstBinding = 0;
+	write.descriptorCount = 1;
+	write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+	write.pImageInfo = &image;
+	command.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, m_fsr1_layout, 0, 1, &write);
+	command.pushConstants(m_fsr1_layout, vk::ShaderStageFlagBits::eFragment, 0,
+	                      sizeof(parameters), &parameters);
+	command.bindPipeline(vk::PipelineBindPoint::eGraphics, m_fsr1_pipeline);
+
+	vk::RenderingAttachmentInfo attachment {};
+	attachment.imageView = m_image_views[m_image_index];
+	attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+	attachment.loadOp = vk::AttachmentLoadOp::eLoad;
+	attachment.storeOp = vk::AttachmentStoreOp::eStore;
+	vk::RenderingInfo rendering {};
+	rendering.renderArea.extent = m_extent;
+	rendering.layerCount = 1;
+	rendering.colorAttachmentCount = 1;
+	rendering.pColorAttachments = &attachment;
+	command.beginRendering(&rendering);
+	const vk::Viewport viewport {static_cast<float>(rect.offset.x), static_cast<float>(rect.offset.y),
+	                             static_cast<float>(rect.extent.width), static_cast<float>(rect.extent.height),
+	                             0.0f, 1.0f};
+	command.setViewport(0, 1, &viewport);
+	command.setScissor(0, 1, &rect);
+	command.draw(3, 1, 0, 0);
+	command.endRendering();
+}
+
 void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* source,
                                       const Presenter::Layer& overlay, bool draw_system_overlay) {
-	auto       vk_command      = command.Handle();
-	const bool convert_source  = source != nullptr && source->hdr && !m_hdr_active;
-	const bool blit_source     = source != nullptr && !convert_source;
-	const bool draw_overlay    = overlay.frame != nullptr;
-	const bool draw_attachment = convert_source || draw_overlay || draw_system_overlay;
+	auto       vk_command     = command.Handle();
+	const bool convert_source = source != nullptr && source->hdr && !m_hdr_active;
+	const bool draw_overlay = overlay.frame != nullptr;
+	const auto* aspect_source = source != nullptr ? source : overlay.frame;
+	const auto game_rect = !Config::StretchEnabled() && aspect_source != nullptr
+	                           ? FitAspect(aspect_source->image.extent, m_extent)
+	                           : vk::Rect2D {{0, 0}, m_extent};
+	const bool fsr1_format_supported =
+	    source != nullptr &&
+	    (source->image.format == vk::Format::eR8G8B8A8Unorm ||
+	     source->image.format == vk::Format::eB8G8R8A8Unorm);
+	const bool fsr1_source = Config::Fsr1Enabled() && fsr1_format_supported &&
+	                         !source->hdr && !m_hdr_active &&
+	                         source->image.extent.width < game_rect.extent.width &&
+	                         source->image.extent.height < game_rect.extent.height;
+	const bool blit_source = source != nullptr && !convert_source && !fsr1_source;
+	const bool draw_attachment = convert_source || fsr1_source || draw_overlay || draw_system_overlay;
 	if (blit_source) {
 		source->Transit(vk_command, vk::ImageLayout::eTransferSrcOptimal,
 		                vk::AccessFlagBits2::eTransferRead);
 	}
-	if (convert_source) {
+	if (convert_source || fsr1_source) {
 		source->Transit(vk_command, vk::ImageLayout::eShaderReadOnlyOptimal,
 		                vk::AccessFlagBits2::eShaderRead);
 	}
@@ -789,10 +970,6 @@ void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* 
 	                           vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags {}, 0,
 	                           nullptr, 0, nullptr, 1, &to_transfer);
 
-	const auto* aspect_source = source != nullptr ? source : overlay.frame;
-	const auto  game_rect     = !Config::StretchEnabled() && aspect_source != nullptr
-	                               ? FitAspect(aspect_source->image.extent, m_extent)
-	                               : vk::Rect2D {{0, 0}, m_extent};
 	if (source == nullptr || game_rect.extent != m_extent) {
 		const vk::ClearColorValue black {};
 		vk_command.clearColorImage(m_images[m_image_index], vk::ImageLayout::eTransferDstOptimal,
@@ -864,6 +1041,12 @@ void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* 
 		};
 		if (convert_source) {
 			DrawLayer(vk_command, {source, 0, false}, game_rect);
+			if (draw_overlay || draw_system_overlay) {
+				attachment_barrier();
+			}
+		}
+		if (fsr1_source) {
+			DrawFsr1(vk_command, *source, game_rect);
 			if (draw_overlay || draw_system_overlay) {
 				attachment_barrier();
 			}
