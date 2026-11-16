@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QUuid>
 #include <QXmlStreamReader>
 
 extern "C" {
@@ -242,8 +243,9 @@ QString BuildLaunchPlan(const QString& title_id, const QString& version, const Q
 	if (!QDir().mkpath(launch_dir)) {
 		return fail(Tr("Could not create the temporary render-profile patch directory."));
 	}
+	const auto suffix = QUuid::createUuid().toString(QUuid::WithoutBraces);
 	const auto output_path = QDir(launch_dir).filePath(
-	    QStringLiteral("PPSA01341-01.007.000-render-%1.json").arg(render_preset));
+	    QStringLiteral("PPSA01341-01.007.000-render-%1-%2.json").arg(render_preset).arg(suffix));
 	QSaveFile output(output_path);
 	const auto data = QJsonDocument(root).toJson(QJsonDocument::Indented);
 	if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size() ||
