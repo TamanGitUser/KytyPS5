@@ -246,8 +246,8 @@
             </item>
             <item row="16" column="0">
              <widget class="QLabel" name="label_demons_souls_render_preset">
-              <property name="toolTip"><string>Experimental in-memory render profiles for Demon's Souls PPSA01341 01.007.000. Before the game initializes, the emulator validates the original mode-3 code signature, the 3840x2160 output pair and the game's 2560x1440 render pair. It changes only the 3D render size and mode lookup table; 4K output and the game's TAA/post-processing remain enabled. No game files are modified. This is separate from FSR.</string></property>
-              <property name="text"><string>FSR 1 quality profile (Demon's Souls):</string></property>
+              <property name="toolTip"><string>Experimental in-memory 3D render-resolution profiles for Demon's Souls PPSA01341 01.007.000. The emulator verifies the mode-3 code signature, 3840x2160 output pair and original 2560x1440 render pair before changing the game’s 3D render size and mode lookup table. The 4K output and TAA/post-processing target remain unchanged. Selecting a non-Auto profile also enables FSR 1 presentation processing; this control changes the game’s internal resolution, not the FSR algorithm.</string></property>
+              <property name="text"><string>Demon's Souls render resolution:</string></property>
              </widget>
             </item>
             <item row="16" column="1">
