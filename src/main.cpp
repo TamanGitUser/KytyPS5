@@ -69,6 +69,7 @@ static void PrintUsage() {
 	::printf("  --fsr1                               Enable AMD FSR 1 EASU for eligible SDR upscaling.\n");
 	::printf("  --fsr1-sharpness <0..100>            AMD FSR 1 RCAS sharpening strength (default: 50).\n");
 	::printf("  --demons-souls-render-height <720..2160>  16:9 3D render height; keeps 4K output (PPSA01341 01.007.000).\n");
+	::printf("  --demons-souls-texture-reduce-levels <0..2>  Omit 0-2 largest BC texture mips (PPSA01341 01.007.000).\\n");
 	::printf("  --anisotropy-override <value>        0=game, 1=off, 2/4/8/16=force.\n");
 	::printf("  --texture-mip-bias-quarter <-8..8>   Sampling mip bias in 0.25 mip steps.\n");
 	::printf("  --tessellation                      Draw tessellation patches; skipped by default.\n");
@@ -391,6 +392,12 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			     (options.config.demons_souls_render_height < 720 ||
 			      options.config.demons_souls_render_height > 2160))) {
 				::printf("invalid Demon's Souls render height: %s\n", value.c_str());
+				return false;
+			}
+		} else if (arg == "--demons-souls-texture-reduce-levels") {
+			if (!ParseUint32(value, options.config.demons_souls_texture_reduce_levels) ||
+			    options.config.demons_souls_texture_reduce_levels > 2) {
+				::printf("invalid Demon's Souls texture reduction level: %s\\n", value.c_str());
 				return false;
 			}
 		} else if (arg == "--vblank-frequency") {
