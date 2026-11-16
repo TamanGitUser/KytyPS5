@@ -21,6 +21,7 @@ enum class Counter {
 	GpuWaits, // CPU blocked on a GPU timeline semaphore.
 	GpuWaitNs,
 	GpuFaults, // Guest writes to GPU-tracked memory.
+	GpuFaultHandlingNs, // Host elapsed time servicing guest GPU memory faults.
 	ShadersCompiled,
 	ShaderCompileNs,
 	PipelinesCreated,
