@@ -221,9 +221,9 @@
             </item>
             <item row="14" column="1">
              <widget class="QComboBox" name="comboBox_upscaler">
-              <property name="toolTip"><string>FSR 1 EASU is for SDR presentation upscaling only. It does not change the game's internal render resolution. FSR 2/3 require temporal inputs not yet exposed by the emulator.</string></property>
+              <property name="toolTip"><string>AMD FSR 1 uses EASU spatial upscaling followed by adjustable RCAS sharpening for eligible SDR presentation. It does not change the game's internal render resolution. FSR 2/3 remain unavailable until temporal inputs and integration are implemented.</string></property>
               <item><property name="text"><string>Off (linear blit)</string></property></item>
-              <item><property name="text"><string>AMD FSR 1 (EASU)</string></property></item>
+              <item><property name="text"><string>AMD FSR 1 (EASU + RCAS)</string></property></item>
               <item><property name="text"><string>AMD FSR 2 (unavailable)</string></property></item>
               <item><property name="text"><string>AMD FSR 3.1 (unavailable)</string></property></item>
              </widget>
