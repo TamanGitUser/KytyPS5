@@ -955,11 +955,14 @@ void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
 		                     "create FSR1 source image view");
 	}
 
-	const bool extent_changed = m_fsr1_intermediate.image == nullptr ||
-	                            m_fsr1_intermediate_extent.width != rect.extent.width ||
-	                            m_fsr1_intermediate_extent.height != rect.extent.height ||
-	                            m_fsr1_intermediate.format != m_format;
-	if (extent_changed) {
+	const bool use_easu = frame.image.extent.width < rect.extent.width ||
+		                      frame.image.extent.height < rect.extent.height;
+		if (use_easu) {
+		const bool extent_changed = m_fsr1_intermediate.image == nullptr ||
+		                            m_fsr1_intermediate_extent.width != rect.extent.width ||
+		                            m_fsr1_intermediate_extent.height != rect.extent.height ||
+		                            m_fsr1_intermediate.format != m_format;
+		if (extent_changed) {
 		// A previously submitted presentation may still sample this image. Serialize the
 		// rare resize path before destroying and reallocating its Vulkan image/view.
 		if (m_fsr1_intermediate.image != nullptr) {
@@ -999,65 +1002,74 @@ void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
 		    device.createImageView(&view, nullptr, &m_fsr1_intermediate_view),
 		    "create FSR1 intermediate image view");
 		m_fsr1_intermediate_extent = rect.extent;
+		}
+
 	}
 
-	// Pass 1: EASU scales the game's presentation surface into an intermediate image.
-	TransitFsr1Intermediate(command, vk::ImageLayout::eColorAttachmentOptimal,
-	                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-	                        vk::AccessFlagBits2::eColorAttachmentWrite);
-	FsrEasuParameters easu {};
-	FsrEasuCon(easu.con0, easu.con1, easu.con2, easu.con3,
-	           static_cast<float>(frame.image.extent.width),
-	           static_cast<float>(frame.image.extent.height),
-	           static_cast<float>(frame.image.extent.width),
-	           static_cast<float>(frame.image.extent.height),
-	           static_cast<float>(rect.extent.width),
-	           static_cast<float>(rect.extent.height));
-	easu.output_offset[0] = 0;
-	easu.output_offset[1] = 0;
-	const vk::DescriptorImageInfo source_image {
-	    m_fsr1_sampler, frame.view, vk::ImageLayout::eShaderReadOnlyOptimal};
-	vk::WriteDescriptorSet source_write {};
-	source_write.dstBinding = 0;
-	source_write.descriptorCount = 1;
-	source_write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-	source_write.pImageInfo = &source_image;
-	command.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, m_fsr1_layout, 0, 1,
-	                             &source_write);
-	command.pushConstants(m_fsr1_layout, vk::ShaderStageFlagBits::eFragment, 0,
-	                      sizeof(easu), &easu);
-	command.bindPipeline(vk::PipelineBindPoint::eGraphics, m_fsr1_pipeline);
-	vk::RenderingAttachmentInfo easu_attachment {};
-	easu_attachment.imageView = m_fsr1_intermediate_view;
-	easu_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-	easu_attachment.loadOp = vk::AttachmentLoadOp::eDontCare;
-	easu_attachment.storeOp = vk::AttachmentStoreOp::eStore;
-	vk::RenderingInfo easu_rendering {};
-	easu_rendering.renderArea.extent = rect.extent;
-	easu_rendering.layerCount = 1;
-	easu_rendering.colorAttachmentCount = 1;
-	easu_rendering.pColorAttachments = &easu_attachment;
-	command.beginRendering(&easu_rendering);
-	const vk::Viewport easu_viewport {0.0f, 0.0f, static_cast<float>(rect.extent.width),
-	                                  static_cast<float>(rect.extent.height), 0.0f, 1.0f};
-	const vk::Rect2D easu_scissor {{0, 0}, rect.extent};
-	command.setViewport(0, 1, &easu_viewport);
-	command.setScissor(0, 1, &easu_scissor);
-	command.draw(3, 1, 0, 0);
-	command.endRendering();
+	if (use_easu) {
+		// Pass 1: EASU scales the game's presentation surface into an intermediate image.
+		TransitFsr1Intermediate(command, vk::ImageLayout::eColorAttachmentOptimal,
+		                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+		                        vk::AccessFlagBits2::eColorAttachmentWrite);
+		FsrEasuParameters easu {};
+		FsrEasuCon(easu.con0, easu.con1, easu.con2, easu.con3,
+		           static_cast<float>(frame.image.extent.width),
+		           static_cast<float>(frame.image.extent.height),
+		           static_cast<float>(frame.image.extent.width),
+		           static_cast<float>(frame.image.extent.height),
+		           static_cast<float>(rect.extent.width),
+		           static_cast<float>(rect.extent.height));
+		easu.output_offset[0] = 0;
+		easu.output_offset[1] = 0;
+		const vk::DescriptorImageInfo source_image {
+		    m_fsr1_sampler, frame.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+		vk::WriteDescriptorSet source_write {};
+		source_write.dstBinding = 0;
+		source_write.descriptorCount = 1;
+		source_write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		source_write.pImageInfo = &source_image;
+		command.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, m_fsr1_layout, 0, 1,
+		                             &source_write);
+		command.pushConstants(m_fsr1_layout, vk::ShaderStageFlagBits::eFragment, 0,
+		                      sizeof(easu), &easu);
+		command.bindPipeline(vk::PipelineBindPoint::eGraphics, m_fsr1_pipeline);
+		vk::RenderingAttachmentInfo easu_attachment {};
+		easu_attachment.imageView = m_fsr1_intermediate_view;
+		easu_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+		easu_attachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+		easu_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+		vk::RenderingInfo easu_rendering {};
+		easu_rendering.renderArea.extent = rect.extent;
+		easu_rendering.layerCount = 1;
+		easu_rendering.colorAttachmentCount = 1;
+		easu_rendering.pColorAttachments = &easu_attachment;
+		command.beginRendering(&easu_rendering);
+		const vk::Viewport easu_viewport {0.0f, 0.0f, static_cast<float>(rect.extent.width),
+		                                  static_cast<float>(rect.extent.height), 0.0f, 1.0f};
+		const vk::Rect2D easu_scissor {{0, 0}, rect.extent};
+		command.setViewport(0, 1, &easu_viewport);
+		command.setScissor(0, 1, &easu_scissor);
+		command.draw(3, 1, 0, 0);
+		command.endRendering();
 
-	// Pass 2: RCAS sharpens the upscaled image before it reaches the swapchain.
-	TransitFsr1Intermediate(command, vk::ImageLayout::eShaderReadOnlyOptimal,
-	                        vk::PipelineStageFlagBits2::eFragmentShader,
-	                        vk::AccessFlagBits2::eShaderRead);
+
+	}
+
+	// RCAS sharpens the EASU result or the game's same-size output surface.
+	if (use_easu) {
+		TransitFsr1Intermediate(command, vk::ImageLayout::eShaderReadOnlyOptimal,
+		                        vk::PipelineStageFlagBits2::eFragmentShader,
+		                        vk::AccessFlagBits2::eShaderRead);
+	}
 	FsrRcasParameters rcas {};
 	const float sharpness_stops =
 	    (100.0f - static_cast<float>(Config::GetFsr1Sharpness())) * (4.0f / 100.0f);
 	FsrRcasCon(rcas.con, sharpness_stops);
 	rcas.output_offset[0] = rect.offset.x;
 	rcas.output_offset[1] = rect.offset.y;
+	const auto rcas_source_view = use_easu ? m_fsr1_intermediate_view : frame.view;
 	const vk::DescriptorImageInfo upscaled_image {
-	    m_fsr1_sampler, m_fsr1_intermediate_view, vk::ImageLayout::eShaderReadOnlyOptimal};
+	    m_fsr1_sampler, rcas_source_view, vk::ImageLayout::eShaderReadOnlyOptimal};
 	vk::WriteDescriptorSet upscaled_write {};
 	upscaled_write.dstBinding = 0;
 	upscaled_write.descriptorCount = 1;
@@ -1109,8 +1121,8 @@ void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* 
 	    (fsr1_output_features & fsr1_output_required) == fsr1_output_required;
 	const bool fsr1_source = Config::Fsr1Enabled() && fsr1_format_supported && fsr1_output_supported &&
 	                         !source->hdr && !m_hdr_active &&
-	                         source->image.extent.width < game_rect.extent.width &&
-	                         source->image.extent.height < game_rect.extent.height;
+	                         source->image.extent.width <= game_rect.extent.width &&
+	                         source->image.extent.height <= game_rect.extent.height;
 	const bool blit_source = source != nullptr && !convert_source && !fsr1_source;
 	const bool draw_attachment = convert_source || fsr1_source || draw_overlay || draw_system_overlay;
 	if (blit_source) {
