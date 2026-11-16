@@ -159,6 +159,11 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 	connect(m_ui->slider_controller_volume, &QSlider::valueChanged, this, [this](int value) {
 		m_ui->label_controller_volume_value->setText(tr("%1%").arg(value));
 	});
+	connect(m_ui->comboBox_upscaler, &QComboBox::currentIndexChanged, this, [this](int index) {
+		const bool enabled = index == 1;
+		m_ui->label_fsr1_sharpness->setEnabled(enabled);
+		m_ui->spinBox_fsr1_sharpness->setEnabled(enabled);
+	});
 	connect(m_ui->comboBox_shader_log_direction, &QComboBox::currentTextChanged, this,
 	        [this](const QString& text) {
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
@@ -343,6 +348,9 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 		}
 	}
 	upscaler->setCurrentIndex(info.fsr1_enabled ? 1 : 0);
+	m_ui->label_fsr1_sharpness->setEnabled(info.fsr1_enabled);
+	m_ui->spinBox_fsr1_sharpness->setEnabled(info.fsr1_enabled);
+	m_ui->spinBox_fsr1_sharpness->setValue(info.fsr1_sharpness);
 	auto* render_preset = m_ui->comboBox_demons_souls_render_preset;
 	for (int index = 0; index < render_preset->count(); index++)
 		render_preset->setItemData(index, index);
@@ -616,6 +624,7 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.shader_cache_enabled      = ui.checkBox_shader_cache->isChecked();
 	info.nvidia_gpu_diagnostics_enabled = ui.checkBox_nvidia_gpu_diagnostics->isChecked();
 	info.fsr1_enabled = ui.comboBox_upscaler->currentData().toInt() == 1;
+	info.fsr1_sharpness = ui.spinBox_fsr1_sharpness->value();
 	info.demons_souls_render_preset = ui.comboBox_demons_souls_render_preset->currentData().toInt();
 	info.anisotropy_override = ui.comboBox_anisotropy_override->currentData().toInt();
 	info.texture_mip_bias_quarters = qRound(ui.doubleSpinBox_texture_mip_bias->value() * 4.0);
