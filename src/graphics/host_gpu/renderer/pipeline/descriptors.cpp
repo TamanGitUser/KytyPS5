@@ -573,7 +573,7 @@ static void HoldFromBaseLevel(TextureCache& cache, TextureCache::ImageDesc& desc
 			return;
 		}
 	}
-	if (!TextureFromLevel(full, first_held, from) || !cache.CanReduceMipRange(full)) {
+	if (!TextureFromLevel(full, first_held, from) || !cache.CanReduceMipRange(full, from)) {
 		return;
 	}
 	desc.info                  = std::move(from);
