@@ -390,7 +390,7 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 			    (options.config.demons_souls_render_height != 0 &&
 			     (options.config.demons_souls_render_height < 720 ||
 			      options.config.demons_souls_render_height > 2160))) {
-				::printf("invalid Demon's Souls render height: %s\\n", value.c_str());
+				::printf("invalid Demon's Souls render height: %s\n", value.c_str());
 				return false;
 			}
 		} else if (arg == "--vblank-frequency") {
