@@ -282,7 +282,14 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	AddFlag(args, info.occlusion_queries_enabled, "--occlusion-queries");
 	AddFlag(args, info.relaxed_shader_float, "--relaxed-shader-float");
 	AddFlag(args, info.shader_cache_enabled, "--shader-cache");
-	const int render_preset = qBound(0, info.demons_souls_render_preset, 4);
+	const bool supports_demons_souls_render_profiles =
+	    info.title_id.compare(QStringLiteral("PPSA01341"), Qt::CaseInsensitive) == 0 &&
+	    info.gameVersion == QStringLiteral("01.007.000") &&
+	    QFileInfo(info.basedir).isDir() &&
+	    QFileInfo(QDir(info.basedir).filePath(info.elf)).isFile() &&
+	    QFileInfo(info.elf).fileName().compare(QStringLiteral("eboot.bin"), Qt::CaseInsensitive) == 0;
+	const int render_preset =
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0;
 	AddFlag(args, info.fsr1_enabled || render_preset != 0, "--fsr1");
 	args << "--fsr1-sharpness" << QString::number(info.fsr1_sharpness);
 	args << "--anisotropy-override" << QString::number(info.anisotropy_override);
