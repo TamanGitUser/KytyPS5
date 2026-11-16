@@ -3,6 +3,7 @@
 layout(set = 0, binding = 0) uniform sampler2D fsr_input;
 layout(push_constant) uniform FsrEasuConstants {
     uvec4 con0; uvec4 con1; uvec4 con2; uvec4 con3; ivec2 output_offset;
+    uvec2 padding;
 } parameters;
 layout(location = 0) out vec4 output_color;
 #define A_GPU 1
