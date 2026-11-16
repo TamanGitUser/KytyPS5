@@ -239,7 +239,7 @@ static void AddFlag(QStringList& args, bool enabled, const char* name) {
 	}
 }
 
-static QStringList CreateEmulatorArgs(const Configuration& info, QString* error) {
+static QStringList CreateEmulatorArgs(const Configuration& info) {
 	QStringList args;
 	auto        r = Configuration::NormalizeResolution(info.screen_resolution).split('x');
 
@@ -282,7 +282,7 @@ static QStringList CreateEmulatorArgs(const Configuration& info, QString* error)
 	AddFlag(args, info.occlusion_queries_enabled, "--occlusion-queries");
 	AddFlag(args, info.relaxed_shader_float, "--relaxed-shader-float");
 	AddFlag(args, info.shader_cache_enabled, "--shader-cache");
-	AddFlag(args, info.fsr1_enabled || info.demons_souls_render_preset > 0, "--fsr1");
+	AddFlag(args, info.fsr1_enabled, "--fsr1");
 	args << "--fsr1-sharpness" << QString::number(info.fsr1_sharpness);
 	args << "--anisotropy-override" << QString::number(info.anisotropy_override);
 	args << "--texture-mip-bias-quarter" << QString::number(info.texture_mip_bias_quarters);
@@ -321,11 +321,12 @@ static QStringList CreateEmulatorArgs(const Configuration& info, QString* error)
 		args << "--addcont" << entry;
 	}
 
-	const auto patch_plan = Cheats::BuildLaunchPlan(info.title_id, info.gameVersion, info.elf,
-	                                                      game, info.demons_souls_render_preset, error);
-	if (error != nullptr && !error->isEmpty()) {
-		return {};
-	}
+	static constexpr int render_heights[] {0, 1656, 1440, 1296, 1080};
+	const int render_preset = qBound(0, info.demons_souls_render_preset, 4);
+	args << "--demons-souls-render-height"
+	     << QString::number(render_heights[render_preset]);
+
+	const auto patch_plan = Cheats::PlanPath(info.title_id);
 	if (!patch_plan.isEmpty() && QFileInfo::exists(patch_plan)) {
 		args << "--game-patch" << patch_plan;
 	}
@@ -422,12 +423,10 @@ static QString CmdCommand(const QString& interpreter, const QStringList& args,
 void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bool close_terminal) {
 	const auto& interpreter = m_p->GetInterpreter();
 
-	QString launch_error;
-	auto args = CreateEmulatorArgs(info, &launch_error);
+	auto args = CreateEmulatorArgs(info);
 	if (args.isEmpty()) {
 		QMessageBox::critical(this, tr("Launch configuration error"),
-		                      launch_error.isEmpty() ? tr("Invalid emulator configuration")
-		                                             : launch_error);
+		                      tr("Invalid emulator configuration"));
 		return;
 	}
 
