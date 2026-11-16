@@ -29,6 +29,7 @@
 #include "graphics/shader/recompiler/ir/passes/ResourceMaterialization.h"
 #include "graphics/shader/shader.h"
 #include "kernel/memory.h"
+#include "loader/demonsSoulsTextureMips.h"
 
 #include <algorithm>
 #include <atomic>
@@ -480,6 +481,106 @@ static bool ResolveTextureMipView(ImageInfo& info, uint32_t physical_levels, boo
 	return false;
 }
 
+
+static bool TextureFromLevel(const ImageInfo& full, uint32_t first, ImageInfo& out) {
+	if (first == 0 || first >= full.resources.levels ||
+	    full.resources.levels > full.mip_layout.size() || full.resources.layers != 1 ||
+	    full.IsVolume() || full.samples != 1 || !full.IsBlock() || !full.IsTiled() ||
+	    full.HasMetadata() || full.HasStencil() || full.IsDepth() ||
+	    full.type != Prospero::ImageType::kColor2D) {
+		return false;
+	}
+
+	const auto shift = [&](uint32_t value) {
+		return std::max((value + (1u << first) - 1u) >> first, 1u);
+	};
+	out                  = full;
+	out.extent.width     = shift(full.extent.width);
+	out.extent.height    = shift(full.extent.height);
+	out.extent.depth     = 1;
+	out.resources.levels = full.resources.levels - first;
+	out.pitch            = TileGetTexturePitch(full.guest_format, out.extent.width, full.tile_mode);
+	if (out.pitch == 0 || out.resources.levels == 0 || out.resources.levels > out.mip_layout.size()) {
+		return false;
+	}
+
+	TileSurfaceLayout probe {};
+	const TileSurfaceDescription description {
+	    full.guest_format, full.tile_mode, TileSurfaceDimension::Dim2D,
+	    out.extent.width, out.extent.height, 1, out.resources.levels, 1};
+	if (!TileGetTiledTextureLayout(description, probe)) {
+		return false;
+	}
+
+	// Ask ImageInfo to rebuild the host-visible mip chain from the first retained guest mip.
+	// The guest base address stays fixed because the game stores smaller mip levels first.
+	out.data.size = 0;
+	out.UpdateSize();
+	if (out.data.address != full.data.address || out.data.size == 0 ||
+	    out.data.size >= full.data.size) {
+		return false;
+	}
+	const auto same_guest_mip = [](const ImageMipInfo& left, const ImageMipInfo& right) {
+		return left.offset == right.offset && left.size == right.size &&
+		       left.pitch == right.pitch && left.height == right.height &&
+		       left.tail_x == right.tail_x && left.tail_y == right.tail_y &&
+		       left.surface_z == right.surface_z;
+	};
+	for (uint32_t level = 0; level < out.resources.levels; ++level) {
+		if (!same_guest_mip(out.mip_layout[level], full.mip_layout[first + level])) {
+			return false;
+		}
+	}
+	const auto alignment = out.DataAlignment();
+	return alignment != 0 && (out.data.address & (static_cast<uint64_t>(alignment) - 1u)) == 0;
+}
+
+static void HoldFromBaseLevel(TextureCache& cache, TextureCache::ImageDesc& desc) {
+	const uint32_t reduce = Loader::DemonsSoulsTextureMips::ReduceLevels();
+	const auto&    full   = desc.info;
+	if (reduce == 0 || desc.type != TextureCache::BindingType::Texture || desc.heap ||
+	    desc.view_info.type != vk::ImageViewType::e2D || desc.view_info.layer_count != 1 ||
+	    desc.view_info.base_layer != 0 || desc.view_info.min_lod != 0 ||
+	    full.resources.layers != 1 || full.resources.levels <= reduce ||
+	    full.samples != 1 || !full.IsBlock() || !full.IsTiled() ||
+	    full.IsVolume() || full.IsDepth() || full.HasMetadata() || full.HasStencil() ||
+	    full.type != Prospero::ImageType::kColor2D ||
+	    full.tile_mode == Prospero::TileMode::kLinear ||
+	    full.tile_mode == Prospero::TileMode::kDepth ||
+	    full.tile_mode == Prospero::TileMode::kRenderTarget ||
+	    std::max(full.extent.width, full.extent.height) < 1024u ||
+	    desc.view_info.level_count == 0) {
+		return;
+	}
+	const uint32_t base = desc.view_info.base_level;
+	if (base > full.resources.levels - 1u ||
+	    desc.view_info.level_count > full.resources.levels - base) {
+		return;
+	}
+	const uint32_t last = base + desc.view_info.level_count - 1u;
+	if (last < reduce || cache.HoldsImage(full)) {
+		return;
+	}
+	const uint32_t first_held = std::max(base, reduce);
+
+	ImageInfo from {};
+	// A prior view may already have caused a texture from an earlier level to be held.
+	for (uint32_t first = std::max(reduce, 1u); first < first_held; ++first) {
+		if (TextureFromLevel(full, first, from) && cache.HoldsImage(from)) {
+			desc.info                  = from;
+			desc.view_info.base_level  = first_held - first;
+			desc.view_info.level_count = last - first_held + 1u;
+			return;
+		}
+	}
+	if (!TextureFromLevel(full, first_held, from) || !cache.CanReduceMipRange(full)) {
+		return;
+	}
+	desc.info                  = std::move(from);
+	desc.view_info.base_level  = 0;
+	desc.view_info.level_count = last - first_held + 1u;
+}
+
 TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   resource,
                                               const ShaderRecompiler::IR::DescriptorValue& value) {
 	if (resource.atomic64 && !m_context.GetGraphics().shader_image_int64_atomics_enabled) {
@@ -633,6 +734,9 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	desc.view_info.base_level = view_base;
 	desc.type = storage ? TextureCache::BindingType::Storage : TextureCache::BindingType::Texture;
 	desc.heap = resource.heap;
+	if (!storage) {
+		HoldFromBaseLevel(texture_cache, desc);
+	}
 
 	auto id = texture_cache.FindImage(desc, shader_conversion);
 	if (!id) {
