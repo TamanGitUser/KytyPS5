@@ -233,7 +233,7 @@
             </item>
             <item row="15" column="1">
              <widget class="QComboBox" name="comboBox_anisotropy_override">
-              <property name="toolTip"><string>Game default preserves original game sampler state. Force Off or 2x-16x anisotropy for texture sampling.</string></property>
+              <property name="toolTip"><string>Manual anisotropic-filtering changes select the Custom texture profile. Texture presets may set this to Game default or Off.</string></property>
               <item><property name="text"><string>Game default</string></property></item>
               <item><property name="text"><string>Off</string></property></item>
               <item><property name="text"><string>2x</string></property></item>
@@ -250,7 +250,7 @@
             </item>
             <item row="16" column="1">
              <widget class="QComboBox" name="comboBox_texture_quality">
-              <property name="toolTip"><string>Original uses the game's mip selection. Reduced, Low and Very low progressively prefer smaller mip levels where available. Texture allocations remain unchanged.</string></property>
+              <property name="toolTip"><string>Original preserves game sampling. Reduced, Low and Very low use progressively coarser mip levels; Low and Very low also turn off anisotropic filtering. This may reduce texture bandwidth, but does not shrink texture allocations or free VRAM.</string></property>
               <item><property name="text"><string>Original</string></property></item>
               <item><property name="text"><string>Reduced</string></property></item>
               <item><property name="text"><string>Low</string></property></item>
