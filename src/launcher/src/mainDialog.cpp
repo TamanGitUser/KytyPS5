@@ -239,7 +239,7 @@ static void AddFlag(QStringList& args, bool enabled, const char* name) {
 	}
 }
 
-static QStringList CreateEmulatorArgs(const Configuration& info) {
+static QStringList CreateEmulatorArgs(const Configuration& info, QString* error) {
 	QStringList args;
 	auto        r = Configuration::NormalizeResolution(info.screen_resolution).split('x');
 
@@ -320,8 +320,12 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 		args << "--addcont" << entry;
 	}
 
-	const auto patch_plan = Cheats::PlanPath(info.title_id);
-	if (QFileInfo::exists(patch_plan)) {
+	const auto patch_plan = Cheats::BuildLaunchPlan(info.title_id, info.gameVersion, info.elf,
+	                                                      game, info.demons_souls_render_preset, error);
+	if (error != nullptr && !error->isEmpty()) {
+		return {};
+	}
+	if (!patch_plan.isEmpty() && QFileInfo::exists(patch_plan)) {
 		args << "--game-patch" << patch_plan;
 	}
 
@@ -417,10 +421,12 @@ static QString CmdCommand(const QString& interpreter, const QStringList& args,
 void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bool close_terminal) {
 	const auto& interpreter = m_p->GetInterpreter();
 
-	auto args = CreateEmulatorArgs(info);
+	QString launch_error;
+	auto args = CreateEmulatorArgs(info, &launch_error);
 	if (args.isEmpty()) {
-		QMessageBox::critical(this, tr("Error"), tr("Invalid emulator configuration"));
-		QApplication::quit();
+		QMessageBox::critical(this, tr("Launch configuration error"),
+		                      launch_error.isEmpty() ? tr("Invalid emulator configuration")
+		                                             : launch_error);
 		return;
 	}
 
