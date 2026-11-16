@@ -429,6 +429,34 @@ TextureCache::ImageIds TextureCache::FindImagesInRegion(uint64_t address, uint64
 	return result;
 }
 
+bool TextureCache::HoldsImage(const ImageInfo& info) {
+	if (info.data.Empty() || info.data.size == 0) return false;
+	std::scoped_lock lock {m_lock};
+	for (const auto id: FindImagesInRegion(info.data.address, info.data.size)) {
+		const auto& image = m_slot_images[id];
+		if (image.backing.image != nullptr && !image.depth_id &&
+		    SameBacking(image.info, info, true) &&
+		    image.info.data == info.data && image.info.extent == info.extent &&
+		    image.info.resources == info.resources && image.info.guest_format == info.guest_format) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool TextureCache::CanReduceMipRange(const ImageInfo& info) {
+	if (info.data.Empty() || info.data.size == 0 ||
+	    m_buffer_cache.IsRegionGpuModified(info.data.address, info.data.size) ||
+	    m_buffer_cache.IsRegionCpuModified(info.data.address, info.data.size)) {
+		return false;
+	}
+	std::scoped_lock lock {m_lock};
+	// Re-use an already-created reduced image through HoldsImage(). Creating a second overlapping
+	// image with a different mip layout is deliberately refused in this first implementation.
+	return FindImagesInRegion(info.data.address, info.data.size).empty();
+}
+
+
 void TextureCache::ValidateImageDesc(const ImageDesc& desc) const {
 	ImageOps::Validate(desc.info);
 	if (desc.view_info.format == vk::Format::eUndefined || desc.view_info.level_count == 0 ||
