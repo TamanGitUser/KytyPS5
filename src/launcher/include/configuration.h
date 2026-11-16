@@ -127,6 +127,7 @@ public:
 	bool                   fsr1_enabled                 = false;
 	int                    anisotropy_override          = 0;
 	int                    texture_mip_bias_quarters    = 0;
+	int                    demons_souls_render_preset   = 0; // Auto, Ultra Quality, Quality, Balanced, Performance
 	bool                   trophy_enabled              = true;
 	int                    trophy_duration_seconds     = 6;
 	bool                   perf_overlay_enabled        = false;
@@ -178,6 +179,7 @@ public:
 		fsr1_enabled                 = other.fsr1_enabled;
 		anisotropy_override          = other.anisotropy_override;
 		texture_mip_bias_quarters    = other.texture_mip_bias_quarters;
+		demons_souls_render_preset   = other.demons_souls_render_preset;
 		trophy_enabled              = other.trophy_enabled;
 		trophy_duration_seconds     = other.trophy_duration_seconds;
 		perf_overlay_enabled        = other.perf_overlay_enabled;
