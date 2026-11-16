@@ -252,11 +252,11 @@
             </item>
             <item row="16" column="1">
              <widget class="QComboBox" name="comboBox_demons_souls_render_preset">
-              <property name="toolTip"><string>Selecting a profile enables AMD FSR 1 and applies a verified game-side render resolution for 4K output: Ultra Quality 2944x1656, Quality 2560x1440, Balanced 2304x1296 or Performance 1920x1080. Performance modes reduce internal rendering work; Ultra Quality may cost FPS. Auto leaves the game resolution unchanged. Only the exact verified PPSA01341 01.007.000 eboot is supported. FSR 1 EASU is used when the game's presentation image is below the output size; otherwise RCAS sharpening is applied to the same-size image.</string></property>
+              <property name="toolTip"><string>Selecting a profile enables AMD FSR 1 and applies a verified game-side render resolution for 4K output: Ultra Quality 2944x1656, Quality 2560x1440, Balanced 2264x1272 or Performance 1920x1080. Performance modes reduce internal rendering work; Ultra Quality may cost FPS. Auto leaves the game resolution unchanged. Only the exact verified PPSA01341 01.007.000 eboot is supported. FSR 1 EASU is used when the game's presentation image is below the output size; otherwise RCAS sharpening is applied to the same-size image.</string></property>
               <item><property name="text"><string>Auto (FSR profile off)</string></property></item>
               <item><property name="text"><string>Ultra Quality — 2944x1656</string></property></item>
               <item><property name="text"><string>Quality — 2560x1440</string></property></item>
-              <item><property name="text"><string>Balanced — 2304x1296</string></property></item>
+              <item><property name="text"><string>Balanced — 2264x1272</string></property></item>
               <item><property name="text"><string>Performance — 1920x1080</string></property></item>
              </widget>
             </item>
