@@ -199,8 +199,8 @@
             </item>
             <item row="11" column="1">
              <widget class="QCheckBox" name="checkBox_shader_cache">
-              <property name="toolTip"><string>Save compiled shaders and pipelines per game and load them at startup.</string></property>
-              <property name="text"><string>Cache shaders</string></property>
+              <property name="toolTip"><string>Record shaders and pipelines this game actually uses, then compile that learned set at a later launch. This does not discover shaders or pipelines the game has never used.</string></property>
+              <property name="text"><string>Cache and precompile encountered shaders</string></property>
              </widget>
             </item>
             <item row="12" column="1">
@@ -243,12 +243,28 @@
              </widget>
             </item>
             <item row="16" column="0">
-             <widget class="QLabel" name="label_texture_mip_bias">
-              <property name="toolTip"><string>Positive values select lower-resolution mip levels; this affects sampling/bandwidth, not allocated VRAM.</string></property>
-              <property name="text"><string>Texture mip bias:</string></property>
+             <widget class="QLabel" name="label_texture_quality">
+              <property name="toolTip"><string>Chooses a positive mip bias to request lower-detail mip levels where the game supplies them. This is not host texture downscaling and does not free allocated VRAM.</string></property>
+              <property name="text"><string>Texture detail:</string></property>
              </widget>
             </item>
             <item row="16" column="1">
+             <widget class="QComboBox" name="comboBox_texture_quality">
+              <property name="toolTip"><string>Original uses the game's mip selection. Reduced, Low and Very low progressively prefer smaller mip levels where available. Texture allocations remain unchanged.</string></property>
+              <item><property name="text"><string>Original</string></property></item>
+              <item><property name="text"><string>Reduced</string></property></item>
+              <item><property name="text"><string>Low</string></property></item>
+              <item><property name="text"><string>Very low</string></property></item>
+              <item><property name="text"><string>Custom</string></property></item>
+             </widget>
+            </item>
+            <item row="17" column="0">
+             <widget class="QLabel" name="label_texture_mip_bias">
+              <property name="toolTip"><string>Positive values select lower-resolution mip levels; this affects sampling/bandwidth, not allocated VRAM.</string></property>
+              <property name="text"><string>Custom texture mip bias:</string></property>
+             </widget>
+            </item>
+            <item row="17" column="1">
              <widget class="QDoubleSpinBox" name="doubleSpinBox_texture_mip_bias">
               <property name="toolTip"><string>Positive values may reduce texture sampling bandwidth, but do not free texture memory.</string></property>
               <property name="decimals"><number>2</number></property>
