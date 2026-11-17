@@ -392,10 +392,8 @@ ShaderModule& PipelineCache::CompileModule(Program& program, const ProgramKey& k
 	} else if (key.stage == ShaderType::Mesh) {
 		module.mesh_task = options.input_info.vertex->indirect_draw;
 	}
-	// Programs with GPU-selected calls depend on their callees' current code.
-	if (program.call_source == nullptr) {
-		StoreModule(key, program, module, result.spirv);
-	}
+	// Persist callable variants too; their linked function code is stored alongside SPIR-V.
+	StoreModule(key, program, module, result.spirv);
 	return module;
 }
 
@@ -435,6 +433,9 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 	m_lookup_key.hash            = params.hash;
 	m_lookup_key.user_data_count = params.user_data_count;
 	BuildStageStaticKey(input_info, m_lookup_key.static_state);
+	options.shader_hash = params.hash;
+	options.user_data   = user_data;
+	options.back_code   = params.back_code;
 	auto entry = m_program_cache.find(m_lookup_key);
 	const auto bind = [&](const ShaderModule& module) {
 		input_info.stage = {.module = &module, .resources = &entry->second.resources};
@@ -446,18 +447,45 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		auto& cached = entry->second;
 		if (cached.skip_dispatch) return nullptr;
 		ShaderModule* module = nullptr;
+		if (cached.uses_calls && cached.call_source == nullptr) {
+			// The store keeps the linked function code with callable shader variants. Rebuild the
+			// guest call-source graph on first use, then match its current linked code to a module.
+			auto restored_source = ShaderRecompiler::PrepareShaderSource(params.code, options);
+			if (restored_source.unsupported_call_pc != UINT32_MAX) {
+				PipelineCacheLog(
+				    "!!! TEMPORARY COMPUTE DISPATCH SKIP !!! shader=0x{:016x} pc=0x{:08x} "
+				    "reason=unsupported GPU-selected callable target; rendering is incomplete",
+				    params.hash, restored_source.unsupported_call_pc);
+				cached.skip_dispatch = true;
+				return nullptr;
+			}
+			if (restored_source.calls.empty()) {
+				// The cache no longer describes this source. Drop its stale modules and compile the
+				// direct shader through the ordinary path below.
+				for (const auto& stale: cached.modules) {
+					m_graphics.device.destroyShaderModule(stale.module, nullptr);
+				}
+				cached.modules.clear();
+				cached.uses_calls = false;
+				source_changed   = true;
+			} else {
+				cached.call_source =
+				    std::make_unique<ShaderRecompiler::ShaderSource>(std::move(restored_source));
+				cached.RefreshCallSource(runtime);
+				source_changed = true;
+			}
+		}
 		if (cached.call_source) {
-			source_changed = cached.RefreshCallSource(runtime);
-			if (!source_changed) module = cached.FindModule<true>(runtime, push_data_cursor);
-		} else {
+			if (!source_changed) {
+				source_changed = cached.RefreshCallSource(runtime);
+				if (!source_changed) module = cached.FindModule<true>(runtime, push_data_cursor);
+			}
+		} else if (!source_changed) {
 			module = cached.FindModule<false>(runtime, push_data_cursor);
 		}
 		if (module != nullptr) return bind(*module);
 	}
 
-	options.shader_hash     = params.hash;
-	options.user_data       = user_data;
-	options.back_code       = params.back_code;
 	const bool diagnostic_shader =
 	    params.hash == 0x4f97479bb358932full || params.hash == 0x94fd11e8abbdc3c8ull;
 	options.dump_ir = Config::GetShaderLogDirection() != Config::LogDirection::Silent ||
@@ -494,12 +522,14 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		translated = ShaderRecompiler::TranslateProgram(params.code, options);
 	}
 	if (entry == m_program_cache.end()) {
-		auto retained = !source.calls.empty()
+		const bool uses_calls = !source.calls.empty();
+		auto retained = uses_calls
 		                    ? std::make_unique<ShaderRecompiler::ShaderSource>(std::move(source))
 		                    : nullptr;
 		entry = m_program_cache.emplace(m_lookup_key, Program {
 		    .call_source   = std::move(retained),
 		    .resource_plan = ShaderRecompiler::IR::ExtractResourcePlan(translated.program),
+		    .uses_calls    = uses_calls,
 		}).first;
 		auto& program = entry->second;
 		EXIT_IF(!ShaderRecompiler::IR::MaterializeResources(
@@ -633,6 +663,18 @@ void PipelineCache::CheckpointDriverCache() {
 
 void PipelineCache::Save() {
 	m_store.Finish();
+	if (m_session_stored_modules != 0 || m_session_stored_graphics_pipelines != 0 ||
+	    m_session_stored_tessellation_layouts != 0) {
+		PipelineCacheLog(
+		    "Game precompiler: learned this session {} shader modules (including callable variants), "
+		    "{} graphics pipeline states and {} tessellation layouts; these records will be "
+		    "precompiled on the next compatible launch",
+		    m_session_stored_modules, m_session_stored_graphics_pipelines,
+		    m_session_stored_tessellation_layouts);
+		m_session_stored_modules = 0;
+		m_session_stored_graphics_pipelines = 0;
+		m_session_stored_tessellation_layouts = 0;
+	}
 	if (m_driver_cache_dirty) {
 		m_driver_cache_dirty = false;
 		WriteDriverCache();

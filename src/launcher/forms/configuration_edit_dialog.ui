@@ -199,8 +199,8 @@
             </item>
             <item row="11" column="1">
              <widget class="QCheckBox" name="checkBox_shader_cache">
-              <property name="toolTip"><string>Record shaders and pipelines this game actually uses, then compile that learned set at a later launch. This does not discover shaders or pipelines the game has never used.</string></property>
-              <property name="text"><string>Cache and precompile encountered shaders</string></property>
+              <property name="toolTip"><string>Build a cumulative game shader/pipeline cache. Each session records newly encountered shader variants and graphics pipeline states; the next compatible launch precompiles the entire stored set. The cache grows as you visit more areas. It cannot discover variants the game has never executed.</string></property>
+              <property name="text"><string>Build cumulative game precompiler cache</string></property>
              </widget>
             </item>
             <item row="12" column="1">

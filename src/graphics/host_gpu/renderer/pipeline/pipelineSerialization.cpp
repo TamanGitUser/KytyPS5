@@ -7,21 +7,17 @@
 #include "graphics/host_gpu/vulkanCommon.h"
 #include "graphics/shader/recompiler/ShaderRecompiler.h"
 #include "graphics/shader/recompiler/ir/Serialize.h"
+#include "loader/systemContent.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <fmt/format.h>
 #include <ranges>
+#include <string>
 #include <xxhash.h>
 #include <zstd.h>
 
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 // The shader store: a header, then zstd-compressed records of everything a run created first.
 // Records are only appended, so a store cut short by a crash keeps every complete record.
@@ -42,34 +38,36 @@ struct Frame {
 	uint64_t checksum        = 0; // XXH3 of the compressed bytes.
 };
 
-// Changes with every build, so records never meet code that encodes them differently. Zero when
-// the executable cannot be found.
-uint64_t BuildStamp() {
-#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
-	std::array<wchar_t, 32768> name {};
-	GetModuleFileNameW(nullptr, name.data(), static_cast<DWORD>(name.size()));
-	const std::filesystem::path path = name.data();
-#elif defined(__APPLE__)
-	std::array<char, 4096> name {};
-	auto size = static_cast<uint32_t>(name.size());
-	_NSGetExecutablePath(name.data(), &size);
-	const std::filesystem::path path = name.data();
-#else
-	const std::filesystem::path path = "/proc/self/exe";
-#endif
-	std::error_code error;
-	const auto      time = std::filesystem::last_write_time(path, error).time_since_epoch().count();
-	return error ? 0 : static_cast<uint64_t>(time);
-}
+// Increment StoreFormatVersion when record serialization changes. Increment
+// ShaderCompilerCacheVersion when translated SPIR-V semantics or specialization rules change.
+// Unrelated executable rebuilds must not invalidate the cumulative game cache.
+constexpr uint32_t StoreFormatVersion = 2;
+constexpr uint32_t ShaderCompilerCacheVersion = 1;
 
-// What every record depends on besides its own fields; empty when the build is unknown.
+// The store is cumulative across compatible Kyty builds. Its compatibility key includes the
+// game identity/version and every host capability that affects emitted SPIR-V. The Vulkan
+// driver's binary pipeline cache has its own stricter vendor/device/driver/UUID signature.
 std::vector<uint8_t> StoreHeader(const GraphicContext& graphics) {
-	const auto stamp = BuildStamp();
-	if (stamp == 0) {
+	std::string title_id;
+	std::string content_id;
+	std::string app_version;
+	if (!Loader::SystemContentParamSfoGetString("TITLE_ID", &title_id) || title_id.empty()) {
 		return {};
 	}
+	(void)Loader::SystemContentParamSfoGetString("CONTENT_ID", &content_id);
+	(void)Loader::SystemContentParamSfoGetString("APP_VER", &app_version);
+
+	const auto title_hash =
+	    XXH3_64bits(title_id.data(), title_id.size());
+	const auto content_hash = content_id.empty()
+	                              ? 0ull
+	                              : XXH3_64bits(content_id.data(), content_id.size());
+	const auto version_hash = app_version.empty()
+	                              ? 0ull
+	                              : XXH3_64bits(app_version.data(), app_version.size());
 	Writer header;
-	IoAll(header, stamp, SpirvProfile(graphics),
+	IoAll(header, StoreFormatVersion, ShaderCompilerCacheVersion, title_hash, content_hash,
+	      version_hash, SpirvProfile(graphics),
 	      graphics.GetPhysicalDeviceProperties().limits.maxComputeSharedMemorySize);
 	return std::move(header.bytes);
 }
@@ -84,7 +82,7 @@ template <class S, class Module> void IoModule(S& io, Module& stage) {
 	// The handle comes from the SPIR-V; stored programs have no function code.
 	auto& [id, handle, info, specialization, function_code, vertex_formats, rect_parameters,
 	       mesh_task] = stage;
-	IoAll(io, id, info, specialization, vertex_formats, rect_parameters, mesh_task);
+	IoAll(io, id, info, specialization, function_code, vertex_formats, rect_parameters, mesh_task);
 }
 
 } // namespace
@@ -141,10 +139,12 @@ void ShaderStoreWriter::Post(Common::UniqueFunction<void>&& job) {
 
 void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	if (path.empty()) {
+		PipelineCacheLog("Game precompiler: disabled (shader cache is off or this is not a Release build)");
 		return;
 	}
 	const auto header = StoreHeader(m_graphics);
 	if (header.empty()) {
+		PipelineCacheLog("Game precompiler: unavailable (could not identify the running title)");
 		return;
 	}
 	const auto           start = std::chrono::steady_clock::now();
@@ -161,12 +161,12 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	// retain the existing parallel warm-up behaviour.
 	const bool   serial  = m_graphics.physical_device_properties.vendorID == 0x10DEu;
 	const size_t threads = serial ? 1u : Common::ParallelThreads();
-	Log::WriteToConsoleAndLog(fmt::format(
-	    "Shader cache: compiling shaders and pipelines from {} ({:.1f} MB) with {} threads\n",
-	    Common::PathToString(path), static_cast<double>(bytes.size()) / 1'000'000.0, threads));
-	auto       records = std::span<const uint8_t>(bytes);
+	auto         records = std::span<const uint8_t>(bytes);
 	const bool reusable =
 	    records.size() >= header.size() && std::ranges::equal(records.first(header.size()), header);
+	if (!reusable && !bytes.empty()) {
+		PipelineCacheLog("Game precompiler: previous store is incompatible with this game/profile; starting a new cumulative store");
+	}
 	if (reusable) {
 		records = records.subspan(header.size());
 		const size_t record_bytes = records.size();
@@ -180,19 +180,38 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 				const auto percent = record_bytes == 0 ? 100u : static_cast<unsigned>(
 				    (100.0 * static_cast<double>(loaded_bytes)) / static_cast<double>(record_bytes));
 				Log::WriteToConsoleAndLog(fmt::format(
-				    "Shader cache: read {} records, {}% ({:.1f}/{:.1f} MB)\n", loaded_records,
+				    "Game precompiler: restored {} records, {}% ({:.1f}/{:.1f} MB)\n", loaded_records,
 				    percent, static_cast<double>(loaded_bytes) / 1'000'000.0,
 				    static_cast<double>(record_bytes) / 1'000'000.0));
 				next_report = loaded_bytes + report_step;
 			}
 		}
+		if (!records.empty()) {
+			PipelineCacheLog("Game precompiler: discarded {} trailing bytes after the last complete cache record",
+			                 records.size());
+		}
+	} else if (bytes.empty()) {
+		PipelineCacheLog("Game precompiler: no compatible prior store; this session will begin learning the game");
 	}
-	// A damaged record ends the store; the records before it stay.
+	// A damaged record ends the store; complete records before it stay.
 	m_store.Open(path, header, reusable ? bytes.size() - records.size() : 0);
 
 	const auto modules = MapModules();
+	const size_t module_count = modules.size() - 1; // Entry zero represents an absent shader stage.
+	const size_t graphics_jobs = m_graphics_pipelines.size();
+	size_t compute_jobs = 0;
+	for (const auto* module: modules | std::views::values) {
+		if (module != nullptr && module->info.stage == ShaderType::Compute) {
+			++compute_jobs;
+		}
+	}
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Game precompiler: cache contains {} shader modules, {} graphics pipeline states, "
+	    "{} compute pipeline recipes and {} tessellation layouts\n",
+	    module_count, graphics_jobs, compute_jobs, m_tess_layouts.size()));
+
 	std::vector<Common::UniqueFunction<void>> jobs;
-	jobs.reserve(m_graphics_pipelines.size() + modules.size());
+	jobs.reserve(graphics_jobs + compute_jobs);
 	for (auto& node: m_graphics_pipelines) {
 		jobs.emplace_back([this, &modules, &node] {
 			CreateGraphicsPipeline(node.second, node.first, modules);
@@ -206,6 +225,9 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 			});
 		}
 	}
+	Log::WriteToConsoleAndLog(fmt::format(
+	    "Game precompiler: compiling {} graphics + {} compute pipelines with {} worker(s)\n",
+	    graphics_jobs, compute_jobs, threads));
 	if (serial) {
 		const size_t report_step = std::max<size_t>(1, (jobs.size() + 9) / 10);
 		for (size_t i = 0; i < jobs.size(); ++i) {
@@ -213,7 +235,7 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 			const size_t completed = i + 1;
 			if (completed % report_step == 0 || completed == jobs.size()) {
 				Log::WriteToConsoleAndLog(fmt::format(
-				    "Shader cache: compiled {} / {} pipeline jobs ({}%)\n", completed,
+				    "Game precompiler: built {} / {} cached pipelines ({}%)\n", completed,
 				    jobs.size(), completed * 100 / jobs.size()));
 			}
 		}
@@ -226,13 +248,12 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	if (!m_graphics_pipelines.empty() || !m_compute_pipelines.empty()) {
 		CheckpointDriverCache();
 	}
+	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                         std::chrono::steady_clock::now() - start)
+	                         .count();
 	Log::WriteToConsoleAndLog(fmt::format(
-	    "Shader cache: loaded {} programs, {} modules, {} pipelines in {} ms\n",
-	    m_program_cache.size(), modules.size() - 1,
-	    m_graphics_pipelines.size() + m_compute_pipelines.size(),
-	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-	                                                          start)
-	        .count()));
+	    "Game precompiler: ready — {} graphics and {} compute pipelines from {} modules in {} ms\n",
+	    m_graphics_pipelines.size(), m_compute_pipelines.size(), module_count, elapsed));
 }
 
 bool PipelineCache::LoadRecord(std::span<const uint8_t>& records) {
@@ -261,10 +282,11 @@ bool PipelineCache::LoadRecord(std::span<const uint8_t>& records) {
 		case Record::Module: {
 			ProgramKey            key;
 			std::vector<uint8_t>  plan;
+			bool                  uses_calls = false;
 			ShaderModule          module;
 			std::vector<uint32_t> spirv;
 			IoKey(reader, key);
-			IoAll(reader, plan);
+			IoAll(reader, plan, uses_calls);
 			IoModule(reader, module);
 			IoAll(reader, spirv);
 			if (!complete()) {
@@ -276,6 +298,7 @@ bool PipelineCache::LoadRecord(std::span<const uint8_t>& records) {
 				m_program_cache.erase(program);
 				return false;
 			}
+			program->second.uses_calls = uses_calls;
 			module.module = CompileSPV(spirv, m_graphics.device);
 			program->second.modules.push_back(std::move(module));
 			break;
@@ -316,9 +339,11 @@ void PipelineCache::StoreModule(const ProgramKey& key, const Program& program,
 	IoAll(record, Record::Module);
 	IoKey(record, key);
 	IoAll(record, ShaderRecompiler::IR::SaveResourcePlan(program.resource_plan));
+	IoAll(record, program.uses_calls);
 	IoModule(record, module);
 	IoAll(record, spirv);
 	m_store.Append(std::move(record.bytes));
+	++m_session_stored_modules;
 }
 
 void PipelineCache::StorePipeline(const GraphicsPipelineKey& key) {
@@ -329,6 +354,7 @@ void PipelineCache::StorePipeline(const GraphicsPipelineKey& key) {
 	IoAll(record, Record::GraphicsPipeline);
 	record.Raw(&key, sizeof(key));
 	m_store.Append(std::move(record.bytes));
+	++m_session_stored_graphics_pipelines;
 }
 
 void PipelineCache::StoreLayout(uint64_t key, const ShaderTessellationInputInfo& layout) {
@@ -338,6 +364,7 @@ void PipelineCache::StoreLayout(uint64_t key, const ShaderTessellationInputInfo&
 	Writer record;
 	IoAll(record, Record::TessellationLayout, key, layout);
 	m_store.Append(std::move(record.bytes));
+	++m_session_stored_tessellation_layouts;
 }
 
 PipelineCache::ModuleMap PipelineCache::MapModules() const {
