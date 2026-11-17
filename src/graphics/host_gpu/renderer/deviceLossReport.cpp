@@ -59,6 +59,8 @@ bool ShouldRecordCheckpoint(DiagnosticCheckpointKind kind) {
 		break;
 	case DiagnosticCheckpointKind::ComputeDispatchBegin:
 	case DiagnosticCheckpointKind::ComputeDispatchEnd:
+	case DiagnosticCheckpointKind::ComputeDispatchIndirectBegin:
+	case DiagnosticCheckpointKind::ComputeDispatchIndirectEnd:
 		interval = ComputeCheckpointInterval;
 		break;
 	case DiagnosticCheckpointKind::PssrDispatchBegin:
