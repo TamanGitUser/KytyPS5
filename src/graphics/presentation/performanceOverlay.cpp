@@ -573,6 +573,18 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		Row("Machine", Percent(host.system_cpu_percent),
 		    host.system_cpu_percent ? std::optional(LevelColor(*host.system_cpu_percent, 70, 90))
 		                            : std::nullopt);
+		Row("PM4 processing",
+		    Fmt("%.0f ms/s  (%.0f lists/s)",
+		        Rate(shown, Counter::Pm4ProcessNs) / 1e6,
+		        Rate(shown, Counter::Pm4ProcessCalls)));
+		Row("  PM4 handlers (est.)",
+		    Fmt("%.0f ms/s  (%.0f packets/s)",
+		        Rate(shown, Counter::Pm4HandlerEstimatedNs) / 1e6,
+		        Rate(shown, Counter::Pm4HandlerPackets)));
+		Row("  GPU callbacks",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::GpuCommandCallbackNs) / 1e6,
+		        Rate(shown, Counter::GpuCommandCallbacks)));
 		if (host.thread_count) {
 			Row("Host threads", Fmt("%u", *host.thread_count));
 		}
@@ -637,7 +649,10 @@ void DrawGpu(const Snapshot& shown, const GraphicContext& graphics) {
 		                      Rate(shown, Counter::Dispatches)));
 		Row("Queue submits", Fmt("%.0f/s", Rate(shown, Counter::QueueSubmits)));
 		const auto faults = Rate(shown, Counter::GpuFaults);
-		Row("Write-tracking faults", Fmt("%.0f/s", faults), LevelColor(faults, 20000, 100000));
+		Row("Write-tracking faults",
+	    Fmt("%.0f/s  (%.1f ms/s)", faults,
+	        Rate(shown, Counter::GpuFaultHandlingNs) / 1e6),
+	    LevelColor(faults, 20000, 100000));
 		CompilationRows(shown);
 		ImGui::EndTable();
 	}
