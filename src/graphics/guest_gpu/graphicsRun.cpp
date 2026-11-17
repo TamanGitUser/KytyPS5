@@ -91,7 +91,14 @@ void GuestGpu::ProcessCommands() {
 			m_commands.pop_front();
 			EXIT_IF(m_pending_commands.fetch_sub(1, std::memory_order_acq_rel) == 0);
 		}
-		command();
+		if (Common::DebugCounters::Enabled()) {
+			Common::DebugCounters::ScopedTimer callback_timer(
+			    Common::DebugCounters::Counter::GpuCommandCallbacks,
+			    Common::DebugCounters::Counter::GpuCommandCallbackNs);
+			command();
+		} else {
+			command();
+		}
 	}
 }
 
@@ -548,7 +555,11 @@ void CommandProcessor::SuspendPm4() {
 }
 
 void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
+	Common::DebugCounters::ScopedTimer pm4_timer(
+	    Common::DebugCounters::Counter::Pm4ProcessCalls,
+	    Common::DebugCounters::Counter::Pm4ProcessNs);
 	const bool debug_dump = graphics_debug_dump_enabled();
+	static thread_local uint32_t handler_sample_index = 0;
 	while (!execution.m_buffer_stack.empty()) {
 		if (g_gpu_state != nullptr) {
 			g_gpu_state->ProcessCommands();
@@ -604,8 +615,21 @@ void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
 			EXIT("unknown op\n\t%05" PRIx32 ":\n\tcmd_id = %08" PRIx32 "\n", offset, packet_header);
 		}
 
-		const auto packet_dw =
-		    handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+		uint32_t packet_dw = 0;
+		const bool sample_handler =
+		    ((handler_sample_index++ & 0xffu) == 0u) && Common::DebugCounters::Enabled();
+		if (sample_handler) {
+			const auto sample_start = std::chrono::steady_clock::now();
+			packet_dw = handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+			const auto sample_ns = static_cast<uint64_t>(
+			    std::chrono::duration_cast<std::chrono::nanoseconds>(
+			        std::chrono::steady_clock::now() - sample_start).count());
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::Pm4HandlerPackets, 256);
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::Pm4HandlerEstimatedNs,
+			                           sample_ns * 256);
+		} else {
+			packet_dw = handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+		}
 		EXIT_IF(packet_dw > remaining_dw);
 		if (execution.m_suspended) {
 			return;
