@@ -78,6 +78,13 @@ template <class S, class Key> void IoKey(S& io, Key& key) {
 	IoAll(io, stage, hash, user_data_count, static_state);
 }
 
+template <typename... Args>
+void PrecompilerLog(fmt::format_string<Args...> format, Args&&... args) {
+	auto message = fmt::format(format, std::forward<Args>(args)...);
+	message += '\n';
+	Log::WriteToConsoleAndLog(message);
+}
+
 template <class S, class Module> void IoModule(S& io, Module& stage) {
 	// The handle comes from the SPIR-V; stored programs have no function code.
 	auto& [id, handle, info, specialization, function_code, vertex_formats, rect_parameters,
@@ -139,12 +146,12 @@ void ShaderStoreWriter::Post(Common::UniqueFunction<void>&& job) {
 
 void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	if (path.empty()) {
-		PipelineCacheLog("Game precompiler: disabled (shader cache is off or this is not a Release build)");
+		PrecompilerLog("Game precompiler: disabled (shader cache is off or this is not a Release build)");
 		return;
 	}
 	const auto header = StoreHeader(m_graphics);
 	if (header.empty()) {
-		PipelineCacheLog("Game precompiler: unavailable (could not identify the running title)");
+		PrecompilerLog("Game precompiler: unavailable (could not identify the running title)");
 		return;
 	}
 	const auto           start = std::chrono::steady_clock::now();
@@ -165,7 +172,7 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 	const bool reusable =
 	    records.size() >= header.size() && std::ranges::equal(records.first(header.size()), header);
 	if (!reusable && !bytes.empty()) {
-		PipelineCacheLog("Game precompiler: previous store is incompatible with this game/profile; starting a new cumulative store");
+		PrecompilerLog("Game precompiler: previous store is incompatible with this game/profile; starting a new cumulative store");
 	}
 	if (reusable) {
 		records = records.subspan(header.size());
@@ -187,11 +194,11 @@ void PipelineCache::WarmUp(const std::filesystem::path& path) {
 			}
 		}
 		if (!records.empty()) {
-			PipelineCacheLog("Game precompiler: discarded {} trailing bytes after the last complete cache record",
+			PrecompilerLog("Game precompiler: discarded {} trailing bytes after the last complete cache record",
 			                 records.size());
 		}
 	} else if (bytes.empty()) {
-		PipelineCacheLog("Game precompiler: no compatible prior store; this session will begin learning the game");
+		PrecompilerLog("Game precompiler: no compatible prior store; this session will begin learning the game");
 	}
 	// A damaged record ends the store; complete records before it stay.
 	m_store.Open(path, header, reusable ? bytes.size() - records.size() : 0);
