@@ -23,6 +23,7 @@ enum class DiagnosticCheckpointKind : uint32_t {
 	GraphicsDrawEnd,
 	PssrDispatchBegin,
 	PssrDispatchEnd,
+	Count,
 };
 
 void SetDiagnosticCheckpoint(GraphicContext& graphics, vk::CommandBuffer command_buffer,

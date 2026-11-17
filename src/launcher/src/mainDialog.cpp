@@ -22,6 +22,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -459,6 +460,37 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bo
 	    CmdCommand(QDir::toNativeSeparators(interpreter), args, close_terminal));
 #endif
 	process->setWorkingDirectory(QFileInfo(interpreter).absolutePath());
+#if defined(_WIN32)
+	// Keep known third-party capture/overlay hooks out of Kyty's Vulkan call chain.
+	// OBS exposes DISABLE_VULKAN_OBS_CAPTURE in its implicit-layer manifest.
+	// RTSS is filtered by Vulkan layer name without disabling other implicit layers.
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(QStringLiteral("DISABLE_VULKAN_OBS_CAPTURE"), QStringLiteral("1"));
+	QStringList layer_filters =
+	    environment.value(QStringLiteral("VK_LOADER_LAYERS_DISABLE")).split(
+	        QLatin1Char(','), Qt::SkipEmptyParts);
+	bool disable_rtss = false;
+	for (const auto& filter: layer_filters) {
+		const auto normalized = filter.trimmed();
+		if (normalized == QLatin1String("*") ||
+		    normalized.compare(QLatin1String("~all~"), Qt::CaseInsensitive) == 0 ||
+		    normalized.compare(QLatin1String("~implicit~"), Qt::CaseInsensitive) == 0 ||
+		    normalized.contains(QLatin1String("RTSS"), Qt::CaseInsensitive)) {
+			disable_rtss = true;
+			break;
+		}
+	}
+	if (!disable_rtss) {
+		layer_filters.push_back(QStringLiteral("*RTSS*"));
+	}
+	environment.insert(QStringLiteral("VK_LOADER_LAYERS_DISABLE"),
+	                   layer_filters.join(QLatin1Char(',')));
+	if (!environment.contains(QStringLiteral("VK_LOADER_DEBUG"))) {
+		environment.insert(QStringLiteral("VK_LOADER_DEBUG"),
+		                   QStringLiteral("warn,layer"));
+	}
+	process->setProcessEnvironment(environment);
+#endif
 #if defined(_WIN32)
 	process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
 		args->flags |= static_cast<uint32_t>(CREATE_NEW_CONSOLE);

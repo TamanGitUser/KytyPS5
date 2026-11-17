@@ -16,7 +16,13 @@
 namespace Libs::Graphics {
 
 namespace {
-constexpr uint32_t MaxDiagnosticCheckpointMarkers = 65536;
+// Keep an append-only registry so pointers already submitted to the driver are never reused.
+// Sampling reduces marker volume while retaining a useful crash window on busy games.
+constexpr uint32_t MaxDiagnosticCheckpointMarkers = 262144;
+constexpr uint64_t  DrawCheckpointInterval = 4096;
+constexpr uint64_t  ComputeCheckpointInterval = 1024;
+constexpr uint64_t  CommandBufferCheckpointInterval = 16;
+constexpr uint64_t  PssrCheckpointInterval = 256;
 
 struct DiagnosticCheckpointRecord {
 	uint64_t                  sequence = 0;
@@ -29,10 +35,44 @@ struct DiagnosticCheckpointRecord {
 };
 
 std::array<DiagnosticCheckpointRecord, MaxDiagnosticCheckpointMarkers> g_checkpoint_markers {};
-std::atomic<uint32_t> g_checkpoint_marker_count {0};
+std::atomic<uint64_t> g_checkpoint_marker_count {0};
+std::atomic<uint64_t> g_checkpoint_observed_count {0};
+std::atomic<uint64_t> g_checkpoint_sampled_out_count {0};
+std::atomic<uint64_t> g_checkpoint_capacity_dropped_count {0};
+std::array<std::atomic<uint64_t>, static_cast<size_t>(DiagnosticCheckpointKind::Count)>
+    g_checkpoint_kind_counts {};
 
 std::mutex g_device_loss_report_mutex;
 bool       g_device_loss_reported = false;
+
+bool ShouldRecordCheckpoint(DiagnosticCheckpointKind kind) {
+	const auto index = static_cast<size_t>(kind);
+	if (index >= g_checkpoint_kind_counts.size()) {
+		return false;
+	}
+	const auto sequence = g_checkpoint_kind_counts[index].fetch_add(1, std::memory_order_relaxed);
+	uint64_t interval = DrawCheckpointInterval;
+	switch (kind) {
+	case DiagnosticCheckpointKind::CommandBufferBegin:
+	case DiagnosticCheckpointKind::CommandBufferBeforeSubmit:
+		interval = CommandBufferCheckpointInterval;
+		break;
+	case DiagnosticCheckpointKind::ComputeDispatchBegin:
+	case DiagnosticCheckpointKind::ComputeDispatchEnd:
+		interval = ComputeCheckpointInterval;
+		break;
+	case DiagnosticCheckpointKind::PssrDispatchBegin:
+	case DiagnosticCheckpointKind::PssrDispatchEnd:
+		interval = PssrCheckpointInterval;
+		break;
+	case DiagnosticCheckpointKind::GraphicsDrawBegin:
+	case DiagnosticCheckpointKind::GraphicsDrawEnd:
+		interval = DrawCheckpointInterval;
+		break;
+	case DiagnosticCheckpointKind::Count: return false;
+	}
+	return sequence % interval == 0;
+}
 
 const char* CheckpointKindName(DiagnosticCheckpointKind kind) {
 	switch (kind) {
@@ -46,6 +86,7 @@ const char* CheckpointKindName(DiagnosticCheckpointKind kind) {
 	case DiagnosticCheckpointKind::GraphicsDrawEnd: return "graphics draw end";
 	case DiagnosticCheckpointKind::PssrDispatchBegin: return "PSSR dispatch begin";
 	case DiagnosticCheckpointKind::PssrDispatchEnd: return "PSSR dispatch end";
+	case DiagnosticCheckpointKind::Count: return "invalid checkpoint kind";
 	}
 	return "unknown Kyty checkpoint";
 }
@@ -64,9 +105,9 @@ bool FindCheckpointRecord(const void* marker, const DiagnosticCheckpointRecord*&
 	if (offset % sizeof(DiagnosticCheckpointRecord) != 0) {
 		return false;
 	}
-	const auto index = static_cast<uint32_t>(offset / sizeof(DiagnosticCheckpointRecord));
+	const auto index = offset / sizeof(DiagnosticCheckpointRecord);
 	if (index >= std::min(g_checkpoint_marker_count.load(std::memory_order_acquire),
-	                      MaxDiagnosticCheckpointMarkers)) {
+	                      static_cast<uint64_t>(MaxDiagnosticCheckpointMarkers))) {
 		return false;
 	}
 	record = &g_checkpoint_markers[index];
@@ -129,10 +170,16 @@ void ReportDiagnosticCheckpoints(GraphicContext& graphics) {
 	}
 	const auto total_markers =
 	    std::min(g_checkpoint_marker_count.load(std::memory_order_acquire),
-	             MaxDiagnosticCheckpointMarkers);
+	             static_cast<uint64_t>(MaxDiagnosticCheckpointMarkers));
+	const auto observed = g_checkpoint_observed_count.load(std::memory_order_relaxed);
+	const auto sampled_out = g_checkpoint_sampled_out_count.load(std::memory_order_relaxed);
+	const auto capacity_dropped =
+	    g_checkpoint_capacity_dropped_count.load(std::memory_order_relaxed);
 	Log::WriteToConsoleAndLog(fmt::format(
-	    "Kyty diagnostic markers recorded: {}{}\n", total_markers,
-	    total_markers == MaxDiagnosticCheckpointMarkers ? " (capacity reached)" : ""));
+	    "Kyty diagnostic markers recorded: {} / {}; observed={} sampled_out={} "
+	    "capacity_dropped={}{}\n",
+	    total_markers, MaxDiagnosticCheckpointMarkers, observed, sampled_out, capacity_dropped,
+	    capacity_dropped != 0 ? " (capacity reached)" : ""));
 }
 } // namespace
 
@@ -146,12 +193,18 @@ void SetDiagnosticCheckpoint(GraphicContext& graphics, vk::CommandBuffer command
 	if (set_checkpoint == nullptr) {
 		return;
 	}
+	g_checkpoint_observed_count.fetch_add(1, std::memory_order_relaxed);
+	if (!ShouldRecordCheckpoint(kind)) {
+		g_checkpoint_sampled_out_count.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
 	const auto index = g_checkpoint_marker_count.fetch_add(1, std::memory_order_relaxed);
 	if (index >= MaxDiagnosticCheckpointMarkers) {
+		g_checkpoint_capacity_dropped_count.fetch_add(1, std::memory_order_relaxed);
 		return;
 	}
 	auto& record = g_checkpoint_markers[index];
-	record.sequence = static_cast<uint64_t>(index) + 1;
+	record.sequence = index + 1;
 	record.primary  = primary;
 	record.auxiliary = auxiliary;
 	record.kind = kind;
