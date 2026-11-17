@@ -48,6 +48,13 @@ enum class Counter {
 	GuestFileReadBytes,
 	GuestFileWriteBytes,
 	AudioUnderruns,
+	// Guest GPU command processor profiling. PM4 handler time is sampled and scaled.
+	Pm4ProcessCalls,
+	Pm4ProcessNs,
+	Pm4HandlerPackets,
+	Pm4HandlerEstimatedNs,
+	GpuCommandCallbacks,
+	GpuCommandCallbackNs,
 	// Overlapping host elapsed timings, including waits.
 	GpuThreadBusyNs,
 	PresentNs, // Includes image acquire and overlay preparation.
