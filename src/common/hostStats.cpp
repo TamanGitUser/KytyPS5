@@ -105,7 +105,7 @@ void SampleWindowsThreads(HostStats& stats, Counters& now) {
 						    WideCharToMultiByte(CP_UTF8, 0, description, -1, nullptr, 0,
 						                        nullptr, nullptr);
 						if (length > 1) {
-							thread.name.resize(static_cast<size_t>(length), '\\0');
+							thread.name.resize(static_cast<size_t>(length), '\0');
 							WideCharToMultiByte(CP_UTF8, 0, description, -1,
 							                    thread.name.data(), length, nullptr, nullptr);
 							thread.name.pop_back();
