@@ -585,6 +585,14 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		    Fmt("%.1f ms/s  (%.0f/s)",
 		        Rate(shown, Counter::GpuCommandCallbackNs) / 1e6,
 		        Rate(shown, Counter::GpuCommandCallbacks)));
+		Row("  Indirect fallback",
+		    Fmt("%.0f draws/s  %.1f ms/s",
+		        Rate(shown, Counter::IndirectFallbackDraws),
+		        Rate(shown, Counter::IndirectFallbackNs) / 1e6));
+		Row("  Dispatch host",
+		    Fmt("%.1f ms/s  (%.0f calls/s)",
+		        Rate(shown, Counter::DispatchHostNs) / 1e6,
+		        Rate(shown, Counter::DispatchHostCalls)));
 		if (host.thread_count) {
 			Row("Host threads", Fmt("%u", *host.thread_count));
 		}
@@ -644,7 +652,10 @@ void DrawGpu(const Snapshot& shown, const GraphicContext& graphics) {
 		const double fps = std::max(shown.fps, 1.0);
 		GpuActivityRows(shown);
 		Row("Instances", Fmt("%.0f/frame", Rate(shown, Counter::DrawInstances) / fps));
-		Row("Indirect draws", Fmt("%.0f/s", Rate(shown, Counter::IndirectDraws)));
+		Row("Indirect draws",
+		    Fmt("%.0f/s  (%.0f native batches/s)",
+		        Rate(shown, Counter::IndirectDraws),
+		        Rate(shown, Counter::IndirectNativeBatches)));
 		Row("Dispatches", Fmt("%.0f/frame  %.0f/s", Rate(shown, Counter::Dispatches) / fps,
 		                      Rate(shown, Counter::Dispatches)));
 		Row("Queue submits", Fmt("%.0f/s", Rate(shown, Counter::QueueSubmits)));

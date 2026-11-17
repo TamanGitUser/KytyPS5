@@ -16,7 +16,13 @@ enum class Counter {
 	Draws,
 	DrawInstances,
 	IndirectDraws,
+	IndirectNativeBatches, // Successfully submitted as one Vulkan indirect batch.
+	IndirectFallbackDraws, // Indirect records expanded into individual host draw calls.
+	IndirectFallbackCalls,
+	IndirectFallbackNs,
 	Dispatches,
+	DispatchHostCalls,
+	DispatchHostNs,
 	QueueSubmits,
 	GpuWaits, // CPU blocked on a GPU timeline semaphore.
 	GpuWaitNs,

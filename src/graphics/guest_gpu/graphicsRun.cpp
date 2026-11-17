@@ -825,6 +825,7 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 	DrawIndirectArgs records {args_addr, draw_count, stride_in_bytes};
 	if (IndirectDrawOffsets(registers, records.offsets)) {
 		if (!indexed && executor.DrawAuto(CurrentBuffer(), {.indirect = records})) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectNativeBatches);
 			return;
 		}
 		if (indexed && m_index_buffer_size != 0 &&
@@ -832,10 +833,17 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 		                                         .index_addr          = IndexAddress(0),
 		                                         .index_type_and_size = m_index_type_and_size,
 		                                         .indirect            = records})) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectNativeBatches);
 			return;
 		}
 	}
 
+	// A guest packet can require per-subdraw register updates which Vulkan cannot express in one
+	// indirect command. Measure that CPU fallback separately from successful native batches.
+	Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectFallbackDraws, draw_count);
+	Common::DebugCounters::ScopedTimer fallback_timer(
+	    Common::DebugCounters::Counter::IndirectFallbackCalls,
+	    Common::DebugCounters::Counter::IndirectFallbackNs);
 	const uint32_t max_indices = m_index_buffer_size != 0 ? m_index_buffer_size : UINT32_MAX;
 	for (uint32_t i = 0; i < draw_count; i++) {
 		const auto addr = args_addr + static_cast<uint64_t>(i) * stride_in_bytes;
@@ -866,6 +874,9 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 void CommandProcessor::DispatchDirect(uint32_t thread_group_x, uint32_t thread_group_y,
                                       uint32_t thread_group_z, uint32_t mode) {
 	m_sh_ctx.SetCsWaveSize(Pm4::ComputeWaveSize(mode));
+	Common::DebugCounters::ScopedTimer dispatch_timer(
+	    Common::DebugCounters::Counter::DispatchHostCalls,
+	    Common::DebugCounters::Counter::DispatchHostNs);
 	m_renderer.GetRenderExecutor().DispatchDirect(CurrentBuffer(), thread_group_x, thread_group_y,
 	                                              thread_group_z, mode, IsAsyncComputeQueue());
 }
@@ -883,6 +894,9 @@ void CommandProcessor::DispatchIndirect(uint64_t args_addr, uint32_t mode) {
 		return;
 	}
 	m_sh_ctx.SetCsWaveSize(Pm4::ComputeWaveSize(mode));
+	Common::DebugCounters::ScopedTimer dispatch_timer(
+	    Common::DebugCounters::Counter::DispatchHostCalls,
+	    Common::DebugCounters::Counter::DispatchHostNs);
 	m_renderer.GetRenderExecutor().DispatchIndirect(CurrentBuffer(), args_addr, mode,
 	                                                IsAsyncComputeQueue());
 }
