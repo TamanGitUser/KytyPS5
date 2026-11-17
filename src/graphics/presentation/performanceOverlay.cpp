@@ -593,6 +593,20 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		    Fmt("%.1f ms/s  (%.0f calls/s)",
 		        Rate(shown, Counter::DispatchHostNs) / 1e6,
 		        Rate(shown, Counter::DispatchHostCalls)));
+		Row("  Dispatch direct / indirect",
+		    Fmt("%.0f / %.0f calls/s",
+		        Rate(shown, Counter::DispatchDirectCalls),
+		        Rate(shown, Counter::DispatchIndirectCalls)));
+		Row("  Compute program lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeProgramNs) / 1e6));
+		Row("  Compute pipeline lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputePipelineNs) / 1e6));
+		Row("  Compute resource binding",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeBindingsNs) / 1e6));
+		Row("  Compute barriers",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeBarrierNs) / 1e6));
+		Row("  Compute command recording",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeCommandNs) / 1e6));
 		if (host.thread_count) {
 			Row("Host threads", Fmt("%u", *host.thread_count));
 		}
