@@ -561,16 +561,16 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 	}
 	auto& pipeline = *pipeline_ptr;
 	auto& bindings = m_compute_bindings;
+	const auto& program = input_info.stage.module->info;
 	const auto vk_buffer = buffer.Handle();
+	PreparedBindings* descriptor_stage = &bindings;
 	{
 		Common::DebugCounters::ScopedTimer timer(
 		    Common::DebugCounters::Counter::ComputeBindingsCalls,
 		    Common::DebugCounters::Counter::ComputeBindingsNs);
-		PreparedBindings* descriptor_stage = &bindings;
 		PrepareBindings(input_info.stage, bindings);
 		BackAddressBases(m_context, input_info.stage);
 		FindBuffers(std::span {&descriptor_stage, 1u});
-		const auto& program = input_info.stage.module->info;
 		if (program.info.uses_dma) {
 			m_context.PrepareBda();
 		}
@@ -579,12 +579,16 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 			m_context.GetImageHeap().Rebind(*this);
 		}
 		RebindImages(bindings);
-		// Acquiring arguments can merge cache buffers; finalize shader bindings afterward.
-		const auto [args_buffer, args_offset] = m_context.GetBufferCache().ObtainBuffer(
-		    args_addr, sizeof(vk::DispatchIndirectCommand), false);
-		EXIT_IF((args_offset & 3u) != 0);
+	}
+	// Acquiring arguments can merge cache buffers; finalize shader bindings afterward.
+	const auto [args_buffer, args_offset] = m_context.GetBufferCache().ObtainBuffer(
+	    args_addr, sizeof(vk::DispatchIndirectCommand), false);
+	EXIT_IF((args_offset & 3u) != 0);
+	{
+		Common::DebugCounters::ScopedTimer timer(
+		    Common::DebugCounters::Counter::ComputeBindingsCalls,
+		    Common::DebugCounters::Counter::ComputeBindingsNs);
 		RebindBuffers(bindings);
-
 		CommitBindings(buffer, vk::PipelineBindPoint::eCompute, pipeline,
 		               std::span {&descriptor_stage, 1u});
 	}
