@@ -30,7 +30,7 @@ void SetThreadName(const char* name) {
 		const int length =
 		    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, nullptr, 0);
 		if (length > 1) {
-			std::wstring description(static_cast<size_t>(length), L'\\0');
+			std::wstring description(static_cast<size_t>(length), L'\0');
 			MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1,
 			                    description.data(), length);
 			description.pop_back();
