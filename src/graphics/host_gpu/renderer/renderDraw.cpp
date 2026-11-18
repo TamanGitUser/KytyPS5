@@ -1305,12 +1305,13 @@ static void LogMaxwellDiagnosticDrawSnapshot(
     const CommandBuffer& buffer, const DrawCallInfo& draw, const DrawRenderState& state,
     vk::PrimitiveTopology topology, const DrawEmitInfo& emit, const DrawIndexBufferSource& index_source,
     const PreparedBindings& vertex, const std::optional<PreparedBindings>& pixel) {
-	static constexpr uint64_t VertexShaderHash = 0x004c650d72ecd57cull;
-	static constexpr uint64_t PixelShaderHash  = 0x94fd11e8abbdc3c8ull;
+	static constexpr uint64_t VertexShaderHash = 0x3ec043bd86013cafull;
+	static constexpr std::array<uint64_t, 3> PixelShaderHashes {
+		0x34b6723f08bf49afull, 0x6af47a4d2a1fb7daull, 0x4482de1b0cab7c19ull};
 	const auto* vs = state.vs_input_info.stage.program;
 	const auto* ps = state.ps_active ? state.ps_input_info.stage.program : nullptr;
 	if (vs == nullptr || ps == nullptr || vs->shader_hash != VertexShaderHash ||
-	    ps->shader_hash != PixelShaderHash) {
+	    std::ranges::find(PixelShaderHashes, ps->shader_hash) == PixelShaderHashes.end()) {
 		return;
 	}
 
