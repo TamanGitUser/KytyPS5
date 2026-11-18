@@ -147,6 +147,7 @@ uint32_t ResolveInstanceOffset(const ShaderVertexInputInfo& vs_input_info) {
 static std::atomic<uint32_t> g_draw_state_log_count   = 0;
 static std::atomic<uint32_t> g_draw_input_log_count   = 0;
 static std::atomic<uint32_t> g_mrt_state_log_count    = 0;
+static std::atomic<uint32_t> g_maxwell_draw_snapshot_count = 0;
 
 static std::atomic<uint32_t> g_framebuffer_skip_log_count = 0;
 
@@ -1298,6 +1299,90 @@ static void LogDrawStateIfNeeded(const CommandBuffer& buffer, const DrawCallInfo
 	                  draw.index_count, index_addr);
 }
 
+// GTX (Maxwell) investigation: a bounded metadata-only snapshot for the known failing Demon’s Souls draw.
+// It deliberately does not dereference guest vertex/index memory; the generic debug logger has separate raw-data paths.
+static void LogMaxwellDiagnosticDrawSnapshot(
+    const CommandBuffer& buffer, const DrawCallInfo& draw, const DrawRenderState& state,
+    vk::PrimitiveTopology topology, const DrawEmitInfo& emit, const DrawIndexBufferSource& index_source,
+    const PreparedBindings& vertex, const std::optional<PreparedBindings>& pixel) {
+	static constexpr uint64_t VertexShaderHash = 0x004c650d72ecd57cull;
+	static constexpr uint64_t PixelShaderHash  = 0x94fd11e8abbdc3c8ull;
+	const auto* vs = state.vs_input_info.stage.program;
+	const auto* ps = state.ps_active ? state.ps_input_info.stage.program : nullptr;
+	if (vs == nullptr || ps == nullptr || vs->shader_hash != VertexShaderHash ||
+	    ps->shader_hash != PixelShaderHash) {
+		return;
+	}
+
+	const auto log_id = g_maxwell_draw_snapshot_count.fetch_add(1, std::memory_order_relaxed);
+	if (log_id >= 8) return;
+
+	const auto& ucfg = buffer.GetUserConfig();
+	LOGF("GPU diagnostic DrawSnapshot[%u]: frame=%llu draw=%s VS=0x%016" PRIx64
+	     " PS=0x%016" PRIx64 " indexed=%s count=%u instances=%u primitive=%u topology=%u "
+	     "index_addr=0x%016" PRIx64 " index_size=0x%016" PRIx64 " index_type=%u guest_index_bytes=%u "
+	     "vertex_offset=%d first_vertex=%u first_instance=%u indirect_args=0x%016" PRIx64
+	     " indirect_count=%u indirect_stride=%u\n",
+	     log_id, static_cast<unsigned long long>(buffer.GetContext().FrameNumber()), draw.name,
+	     vs->shader_hash, ps->shader_hash, emit.indexed ? "true" : "false", draw.index_count,
+	     draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()), static_cast<uint32_t>(topology),
+	     index_source.address, index_source.size, static_cast<uint32_t>(index_source.type),
+	     index_source.guest_element_size, emit.vertex_offset, emit.first_vertex, emit.first_instance,
+	     emit.gpu_args, emit.gpu_args_count, emit.gpu_args_stride);
+
+	for (uint32_t i = 0; i < state.color_count; ++i) {
+		const auto& color = state.color_info[i];
+		const auto extent = color.Extent();
+		LOGF("GPU diagnostic DrawSnapshot[%u]: color[%u] slot=%u image=%s guest_addr=0x%010" PRIx64
+		     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s mip=%u layer=%u\n",
+		     log_id, i, color.target_slot, color.image_id ? "yes" : "no",
+		     color.desc.info.data.address, color.desc.info.data.size, extent.width, extent.height,
+		     vk::to_string(color.desc.view_info.format).c_str(), color.guest_mip_level,
+		     color.guest_array_layer);
+	}
+	const auto& depth = state.depth_info;
+	LOGF("GPU diagnostic DrawSnapshot[%u]: depth image=%s guest_addr=0x%010" PRIx64
+	     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s depth_test=%s depth_write=%s "
+	     "depth_clear=%s stencil_test=%s stencil_clear=%s\n",
+	     log_id, depth.image_id ? "yes" : "no", depth.desc.info.data.address,
+	     depth.desc.info.data.size, depth.desc.info.extent.width, depth.desc.info.extent.height,
+	     vk::to_string(depth.desc.view_info.format).c_str(),
+	     depth.depth_test_enable ? "true" : "false", depth.depth_write_enable ? "true" : "false",
+	     depth.depth_clear_enable ? "true" : "false", depth.stencil_test_enable ? "true" : "false",
+	     depth.stencil_clear_enable ? "true" : "false");
+
+	LOGF("GPU diagnostic DrawSnapshot[%u]: VS buffers=%d attributes/resources=%d PS active=%s PS inputs=%u\n",
+	     log_id, state.vs_input_info.buffers_num, state.vs_input_info.resources_num,
+	     state.ps_active ? "true" : "false", state.ps_active ? state.ps_input_info.input_num : 0);
+	for (int i = 0; i < state.vs_input_info.buffers_num; ++i) {
+		const auto& vb = state.vs_input_info.buffers[i];
+		LOGF("GPU diagnostic DrawSnapshot[%u]: vb[%d] addr=0x%010" PRIx64
+		     " stride=%u records=%u fetch_index=%u attributes=%u\n",
+		     log_id, i, vb.addr, vb.stride, vb.num_records, vb.fetch_index, vb.attr_num);
+	}
+
+	const auto log_stage = [log_id](const char* stage, const PreparedBindings& bindings) {
+		LOGF("GPU diagnostic DrawSnapshot[%u]: %s descriptor buffers=%zu guest buffer sources=%zu images=%zu samplers=%zu\n",
+		     log_id, stage, bindings.buffers.size(), bindings.buffer_sources.size(),
+		     bindings.images.size(), bindings.samplers.size());
+		for (size_t i = 0; i < bindings.buffer_sources.size(); ++i) {
+			const auto& source = bindings.buffer_sources[i];
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s buffer[%zu] guest_addr=0x%016" PRIx64
+			     " size=0x%016" PRIx64 "\n", log_id, stage, i, source.address, source.size);
+		}
+		for (size_t i = 0; i < bindings.images.size(); ++i) {
+			const auto& image = bindings.images[i];
+			const auto& info = image.desc.info;
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s image[%zu] guest_addr=0x%016" PRIx64
+			     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s layout=%s\n",
+			     log_id, stage, i, info.data.address, info.data.size, info.extent.width, info.extent.height,
+			     vk::to_string(image.desc.view_info.format).c_str(), vk::to_string(image.layout).c_str());
+		}
+	};
+	log_stage("VS", vertex);
+	if (pixel) log_stage("PS", *pixel);
+}
+
 static void EmitDrawPrimitives(const HW::UserConfig& ucfg, vk::CommandBuffer vk_buffer,
                                const ShaderVertexInputInfo& vs_input_info, const DrawCallInfo& draw,
                                const DrawEmitInfo& emit) {
@@ -1475,6 +1560,8 @@ bool RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, CommandBuffer& buff
 	auto& bindings = binding_storage.Get();
 	PrepareGraphicsBindingsInto(state.vs_input_info.stage, state.ps_input_info.stage,
 	                            state.ps_active, bindings);
+	LogMaxwellDiagnosticDrawSnapshot(buffer, draw, state, topology, emit, index_source,
+	                                  bindings.vertex, bindings.pixel);
 	if (FrameCapture::Active()) {
 		CaptureFrameDraw(buffer, draw, state, bindings.vertex, bindings.pixel);
 	}
