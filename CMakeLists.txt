@@ -59,6 +59,8 @@ endif()
 
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
+option(KYTY_WINDOWS_DEBUG_INFO "Emit CodeView debug information in optimized Windows emulator builds" OFF)
+
 if(WIN32)
 	# xbyak.h includes <windows.h> itself; keep its min/max macros away from std::min/std::max.
 	add_compile_definitions(NOMINMAX)
@@ -1027,6 +1029,10 @@ set(KYTY_EMULATOR_MAP_LINK_PATH "${CMAKE_CURRENT_BINARY_DIR}/${KYTY_EMULATOR_MAP
 set(KYTY_EMULATOR_PDB_LINK_PATH "${CMAKE_CURRENT_BINARY_DIR}/kyty_emulator.pdb")
 
 if(KYTY_CLANG_CL)
+	if(KYTY_WINDOWS_DEBUG_INFO)
+		# Keep private CodeView records in the optimized emulator PDB for GPU-crash call-stack analysis.
+		target_compile_options(kyty_emulator PRIVATE "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:/Zi>")
+	endif()
 	# /STACK: 16 MiB reserved for each thread that does not ask for a size (committed only as it is used), not
 	# Windows' 1 MiB. The driver compiles a pipeline on the thread that creates it: NVIDIA 566.07's compiler ran a
 	# wave64 compute shader's cooperative halves (9935d547) past 1 MiB (STATUS_STACK_OVERFLOW in nvoglv64.dll, a

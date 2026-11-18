@@ -93,7 +93,7 @@ jobs:
       - name: Build
         shell: cmd
         env:
-          KYTY_CMAKE_ARGS: -DKYTY_MARCH=x86-64-v3
+          KYTY_CMAKE_ARGS: -DKYTY_MARCH=x86-64-v3 -DKYTY_WINDOWS_DEBUG_INFO=ON
         run: |
           call build-windows.cmd kyty_emulator || exit /b 1
           call build-windows.cmd kyty_shader_precompile || exit /b 1
@@ -113,6 +113,13 @@ jobs:
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item "$build\kyty_emulator.exe", "$build\kyty_shader_precompile.exe", "$build\libwinpthread-1.dll",
             _Build\launcher\KytyLauncher.exe, run-windows.ps1, precompile-windows.ps1, launcher.ps1, launcher.cmd, LICENSE $out
+          # The optimized emulator's matching PDB is required for Nsight call-stack symbol resolution.
+          $pdb = Join-Path $build 'kyty_emulator.pdb'
+          if (-not (Test-Path -LiteralPath $pdb)) { throw "Expected emulator PDB was not produced: $pdb" }
+          Copy-Item $pdb $out
+          # Keep the link map as a secondary address-to-symbol reference.
+          $map = Join-Path $build 'kyty_emulator_clang_cl_lld_link.map'
+          if (Test-Path -LiteralPath $map) { Copy-Item $map $out }
           Copy-Item LICENSES $out -Recurse
           Copy-Item run-windows.json "$out\launch.json"
           Copy-Item docs\PORTABLE-README.md "$out\README.md"
