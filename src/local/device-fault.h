@@ -395,17 +395,68 @@ inline void AppendFault(std::string& text, VkDevice device) {
 		text += "Device fault: no report\n";
 		return;
 	}
-	std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
-	std::vector<VkDeviceFaultVendorInfoEXT>  vendors(counts.vendorInfoCount);
-	counts.vendorBinarySize = 0;
+
+	// Driver-reported counts and payload sizes are untrusted. Keep normal reports complete in ordinary cases,
+	// while bounding all allocations if a driver returns an unexpectedly large report.
+	const auto address_total = counts.addressInfoCount;
+	const auto vendor_total  = counts.vendorInfoCount;
+	const auto binary_total  = counts.vendorBinarySize;
+	constexpr uint32_t MaxAddressRecords = 256;
+	constexpr uint32_t MaxVendorRecords  = 64;
+	constexpr size_t   MaxVendorBinaryBytes = 64u * 1024u * 1024u;
+	const bool binary_too_large = binary_total > MaxVendorBinaryBytes;
+
+	const auto address_capacity = std::min(address_total, MaxAddressRecords);
+	const auto vendor_capacity  = std::min(vendor_total, MaxVendorRecords);
+	std::vector<VkDeviceFaultAddressInfoEXT> addresses(address_capacity);
+	std::vector<VkDeviceFaultVendorInfoEXT>  vendors(vendor_capacity);
+	std::vector<uint8_t> vendor_binary;
+	if (!binary_too_large && binary_total != 0) {
+		vendor_binary.resize(binary_total);
+	}
+
+	counts.addressInfoCount = address_capacity;
+	counts.vendorInfoCount  = vendor_capacity;
+	counts.vendorBinarySize = vendor_binary.size();
 	VkDeviceFaultInfoEXT info {};
-	info.sType         = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
-	info.pAddressInfos = addresses.data();
-	info.pVendorInfos  = vendors.data();
-	const auto result  = g_registry.get(device, &counts, &info);
-	Append(text, "Device fault (%d): %s; %u addresses, %u vendor records\n", static_cast<int>(result), info.description,
-	       counts.addressInfoCount, counts.vendorInfoCount);
-	addresses.resize(std::min<size_t>(addresses.size(), counts.addressInfoCount));
+	info.sType             = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+	info.pAddressInfos     = addresses.empty() ? nullptr : addresses.data();
+	info.pVendorInfos      = vendors.empty() ? nullptr : vendors.data();
+	info.pVendorBinaryData = vendor_binary.empty() ? nullptr : vendor_binary.data();
+
+	const auto result = g_registry.get(device, &counts, &info);
+	if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+		Append(text, "Device fault: detail query failed (%d)\n", static_cast<int>(result));
+		return;
+	}
+
+	const auto address_count = std::min(counts.addressInfoCount, static_cast<uint32_t>(addresses.size()));
+	const auto vendor_count  = std::min(counts.vendorInfoCount, static_cast<uint32_t>(vendors.size()));
+	const auto binary_size   = std::min(vendor_binary.size(), counts.vendorBinarySize);
+	Append(text, "Device fault (%d): %s; %u address(es) collected / %u reported, "
+	             "%u vendor record(s) collected / %u reported, %zu vendor-binary byte(s)\n",
+	       static_cast<int>(result), info.description, address_count, address_total,
+	       vendor_count, vendor_total, binary_size);
+	if (address_total > address_count || vendor_total > vendor_count) {
+		text += "  device-fault detail arrays were truncated to their safety limits\n";
+	}
+	if (binary_too_large) {
+		Append(text, "  vendor crash binary skipped: driver reported %zu bytes (64 MiB limit)\n", binary_total);
+	}
+
+	// Save the raw NVIDIA vendor payload (no application header) so Nsight/Aftermath tools can inspect it.
+	if (binary_size != 0) {
+		if (auto* file = std::fopen("_device_fault.nv-gpudmp", "wb"); file != nullptr) {
+			const auto written = std::fwrite(vendor_binary.data(), 1, binary_size, file);
+			std::fclose(file);
+			Append(text, "  raw vendor crash payload written to _device_fault.nv-gpudmp (%zu / %zu bytes)\n",
+			       written, binary_size);
+		} else {
+			text += "  could not create _device_fault.nv-gpudmp in the current working directory\n";
+		}
+	}
+
+	addresses.resize(address_count);
 	// The same address from many warps (a hang lists each running one's instruction pointer): once, with its count.
 	std::vector<std::pair<VkDeviceFaultAddressInfoEXT, uint32_t>> unique;
 	for (const auto& address: addresses) {
@@ -454,7 +505,7 @@ inline void AppendFault(std::string& text, VkDevice device) {
 		}
 		AppendBindings(text, begin, end, now);
 	}
-	for (uint32_t i = 0; i < counts.vendorInfoCount && i < vendors.size(); ++i)
+	for (uint32_t i = 0; i < vendor_count; ++i)
 		Append(text, "Device fault vendor %u: %s code 0x%llx data 0x%llx\n", i, vendors[i].description,
 		       static_cast<unsigned long long>(vendors[i].vendorFaultCode),
 		       static_cast<unsigned long long>(vendors[i].vendorFaultData));
