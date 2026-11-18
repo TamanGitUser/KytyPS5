@@ -2,6 +2,7 @@
 
 #include "common/abi.h"
 #include "common/assert.h"
+#include "common/debugCounters.h"
 #include "graphics/shader/recompiler/ir/ShaderIR.h"
 
 #include <xbyak/xbyak.h>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <optional>
 #include <unordered_set>
 
 namespace Libs::Graphics::ShaderRecompiler::IR {
@@ -1373,14 +1375,26 @@ void CompileSrtWalker(ResourcePlan& plan, std::span<const Value> values) {
 bool WalkSrt(const ResourcePlan& plan, const SrtRuntime& runtime, std::vector<uint32_t>& flat,
              std::vector<std::pair<uint64_t, uint64_t>>* reads) {
 	if (plan.srt_code == nullptr || runtime.user_data.size() < plan.srt_user_data) return false;
-	flat.assign(plan.srt_reads.size(), 0u);
+	const bool profile_compute = plan.stage == ShaderType::Compute;
+	{
+		std::optional<Common::DebugCounters::ScopedTimer> timer;
+		if (profile_compute) timer.emplace(Common::DebugCounters::Counter::ComputeSrtSetupNs);
+		flat.assign(plan.srt_reads.size(), 0u);
+	}
 	using Walker = const uint64_t* KYTY_SYSV_ABI (*)(const uint32_t*, uint32_t*, uint64_t*, uint64_t);
-	t_running_walker = plan.srt_code.get();
-	const auto* end = plan.srt_code->getCode<Walker>()(runtime.user_data.data(), flat.data(),
-	                                                     plan.srt_scratch.data(), runtime.shader_base);
-	t_running_walker = nullptr;
+	const uint64_t* end = nullptr;
+	{
+		std::optional<Common::DebugCounters::ScopedTimer> timer;
+		if (profile_compute) timer.emplace(Common::DebugCounters::Counter::ComputeSrtExecuteNs);
+		t_running_walker = plan.srt_code.get();
+		end = plan.srt_code->getCode<Walker>()(runtime.user_data.data(), flat.data(),
+		                                       plan.srt_scratch.data(), runtime.shader_base);
+		t_running_walker = nullptr;
+	}
 	if (end == nullptr) return false;
 	if (reads != nullptr) {
+		std::optional<Common::DebugCounters::ScopedTimer> timer;
+		if (profile_compute) timer.emplace(Common::DebugCounters::Counter::ComputeSrtCaptureNs);
 		for (auto* read = plan.srt_scratch.data() + plan.srt_captures / 8u; read != end; ++read)
 			reads->emplace_back(*read, sizeof(uint32_t));
 	}

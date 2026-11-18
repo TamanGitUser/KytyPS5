@@ -11,6 +11,8 @@ namespace Libs::Graphics::ShaderRecompiler::Spirv {
 
 // Host device capabilities and user options that change the emitted SPIR-V. Built once per device.
 struct Profile {
+	// FragmentShaderBarycentricKHR is unavailable on older GPUs such as NVIDIA Maxwell.
+	bool fragment_barycentric = true;
 	bool maintenance8         = false; // Dynamic texel offsets on image samples.
 	bool native_float_min_max = false; // NMin/NMax give the guest's NaN and signed-zero results.
 	// OpReadClockKHR Device tick in picoseconds; 0 without shaderDeviceClock.

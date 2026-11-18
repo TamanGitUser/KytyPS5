@@ -7,6 +7,8 @@
 #include "common/threads.h"
 #include "gpu_blit_shaders/gpu_blit_fs_triangle_spv.h"
 #include "gpu_blit_shaders/gpu_video_out_overlay_spv.h"
+#include "gpu_blit_shaders/gpu_fsr1_easu_spv.h"
+#include "gpu_blit_shaders/gpu_fsr1_rcas_spv.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
@@ -26,9 +28,31 @@
 #include <vector>
 #include <vulkan/vk_platform.h>
 
+#define A_CPU 1
+#include "graphics/host_gpu/shaders/ffx_a.h"
+#include "graphics/host_gpu/shaders/ffx_fsr1.h"
+#undef A_CPU
+
 // IWYU pragma: no_include <intrin.h>
 
 namespace Libs::Graphics {
+
+struct alignas(16) FsrEasuParameters {
+	uint32_t con0[4] {};
+	uint32_t con1[4] {};
+	uint32_t con2[4] {};
+	uint32_t con3[4] {};
+	int32_t output_offset[2] {};
+	uint32_t padding[2] {};
+};
+static_assert(sizeof(FsrEasuParameters) == 80);
+
+struct alignas(16) FsrRcasParameters {
+	uint32_t con[4] {};
+	int32_t output_offset[2] {};
+	uint32_t padding[2] {};
+};
+static_assert(sizeof(FsrRcasParameters) == 32);
 
 struct Presenter::Frame {
 	VulkanImage   image;
@@ -263,6 +287,9 @@ private:
 	void Destroy();
 	void DrawLayer(vk::CommandBuffer command, const Presenter::Layer& layer,
 	               const vk::Rect2D& rect);
+	void DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame, const vk::Rect2D& rect);
+	void TransitFsr1Intermediate(vk::CommandBuffer command, vk::ImageLayout layout,
+	                              vk::PipelineStageFlags2 stage, vk::AccessFlags2 access);
 
 	WindowContext&   m_window;
 	vk::SwapchainKHR m_handle = nullptr;
@@ -283,6 +310,14 @@ private:
 	vk::PipelineLayout             m_overlay_layout      = nullptr;
 	vk::Pipeline                   m_overlay_pipeline    = nullptr;
 	vk::Sampler                    m_overlay_sampler     = nullptr;
+	vk::DescriptorSetLayout        m_fsr1_descriptors     = nullptr;
+	vk::PipelineLayout             m_fsr1_layout          = nullptr;
+	vk::Pipeline                   m_fsr1_pipeline        = nullptr;
+	vk::Sampler                    m_fsr1_sampler         = nullptr;
+	vk::Pipeline                   m_fsr1_rcas_pipeline    = nullptr;
+	VulkanImage                    m_fsr1_intermediate;
+	vk::ImageView                  m_fsr1_intermediate_view = nullptr;
+	vk::Extent2D                   m_fsr1_intermediate_extent {};
 	uint32_t                       m_image_index         = 0;
 	uint32_t                       m_frame_index         = 0;
 };
@@ -495,7 +530,7 @@ Swapchain::~Swapchain() {
 
 void Swapchain::Destroy() {
 	if (m_handle == nullptr && m_image_acquired.empty() && m_render_complete.empty() &&
-	    m_image_views.empty()) {
+	    m_image_views.empty() && m_fsr1_intermediate.image == nullptr) {
 		return;
 	}
 	auto& graphics = m_window.graphic_ctx;
@@ -511,10 +546,28 @@ void Swapchain::Destroy() {
 	graphics.device.destroyPipelineLayout(m_overlay_layout, nullptr);
 	graphics.device.destroyDescriptorSetLayout(m_overlay_descriptors, nullptr);
 	graphics.device.destroySampler(m_overlay_sampler, nullptr);
+	graphics.device.destroyPipeline(m_fsr1_pipeline, nullptr);
+	graphics.device.destroyPipeline(m_fsr1_rcas_pipeline, nullptr);
+	graphics.device.destroyPipelineLayout(m_fsr1_layout, nullptr);
+	graphics.device.destroyDescriptorSetLayout(m_fsr1_descriptors, nullptr);
+	graphics.device.destroySampler(m_fsr1_sampler, nullptr);
+	if (m_fsr1_intermediate_view != nullptr) {
+		graphics.device.destroyImageView(m_fsr1_intermediate_view, nullptr);
+		m_fsr1_intermediate_view = nullptr;
+	}
+	if (m_fsr1_intermediate.image != nullptr) {
+		graphics.DeleteImage(m_fsr1_intermediate);
+	}
+	m_fsr1_intermediate_extent = {};
 	m_overlay_pipeline    = nullptr;
 	m_overlay_layout      = nullptr;
 	m_overlay_descriptors = nullptr;
 	m_overlay_sampler     = nullptr;
+	m_fsr1_descriptors     = nullptr;
+	m_fsr1_layout          = nullptr;
+	m_fsr1_pipeline        = nullptr;
+	m_fsr1_rcas_pipeline   = nullptr;
+	m_fsr1_sampler         = nullptr;
 
 	for (const auto semaphore: m_image_acquired) {
 		if (semaphore != nullptr) {
@@ -751,18 +804,331 @@ void Swapchain::DrawLayer(vk::CommandBuffer command, const Presenter::Layer& lay
 	command.endRendering();
 }
 
+
+void Swapchain::TransitFsr1Intermediate(vk::CommandBuffer command, vk::ImageLayout layout,
+                                                 vk::PipelineStageFlags2 stage,
+                                                 vk::AccessFlags2 access) {
+	if (m_fsr1_intermediate.image == nullptr) {
+		EXIT("FSR 1 intermediate image is not allocated\\n");
+	}
+	auto& state = m_fsr1_intermediate.state;
+	constexpr auto writes = vk::AccessFlagBits2::eColorAttachmentWrite |
+	                        vk::AccessFlagBits2::eShaderWrite |
+	                        vk::AccessFlagBits2::eTransferWrite |
+	                        vk::AccessFlagBits2::eMemoryWrite;
+	if (state.layout == layout && state.access_mask == access &&
+	    !static_cast<bool>(state.access_mask & writes)) {
+		return;
+	}
+	vk::ImageMemoryBarrier2 barrier {};
+	barrier.srcStageMask                    = state.pl_stage;
+	barrier.srcAccessMask                   = state.access_mask;
+	barrier.dstStageMask                    = stage;
+	barrier.dstAccessMask                   = access;
+	barrier.oldLayout                       = state.layout;
+	barrier.newLayout                       = layout;
+	barrier.srcQueueFamilyIndex              = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex              = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image                            = m_fsr1_intermediate.image;
+	barrier.subresourceRange.aspectMask      = vk::ImageAspectFlagBits::eColor;
+	barrier.subresourceRange.baseMipLevel    = 0;
+	barrier.subresourceRange.levelCount      = 1;
+	barrier.subresourceRange.baseArrayLayer  = 0;
+	barrier.subresourceRange.layerCount      = 1;
+	vk::DependencyInfo dependency {};
+	dependency.imageMemoryBarrierCount = 1;
+	dependency.pImageMemoryBarriers    = &barrier;
+	command.pipelineBarrier2(dependency);
+	state = {stage, access, layout};
+}
+
+void Swapchain::DrawFsr1(vk::CommandBuffer command, Presenter::Frame& frame,
+                         const vk::Rect2D& rect) {
+	auto&      graphics = m_window.graphic_ctx;
+	auto       device   = graphics.device;
+	const auto required_features =
+	    vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
+	const auto features = graphics.GetFormatProperties(m_format).optimalTilingFeatures;
+	if ((features & required_features) != required_features) {
+		EXIT("FSR 1 output format lacks color-attachment or sampling support: format=%d\\n",
+		     static_cast<int>(m_format));
+	}
+
+	if (m_fsr1_pipeline == nullptr) {
+		vk::SamplerCreateInfo sampler {};
+		sampler.magFilter = vk::Filter::eLinear;
+		sampler.minFilter = vk::Filter::eLinear;
+		sampler.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+		sampler.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+		sampler.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+		RequireVulkanSuccess(device.createSampler(&sampler, nullptr, &m_fsr1_sampler),
+		                     "create FSR1 sampler");
+
+		const vk::DescriptorSetLayoutBinding binding {
+		    0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment};
+		vk::DescriptorSetLayoutCreateInfo descriptors {};
+		descriptors.flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR;
+		descriptors.bindingCount = 1;
+		descriptors.pBindings = &binding;
+		RequireVulkanSuccess(
+		    device.createDescriptorSetLayout(&descriptors, nullptr, &m_fsr1_descriptors),
+		    "create FSR1 descriptor layout");
+
+		const vk::PushConstantRange constants {
+		    vk::ShaderStageFlagBits::eFragment, 0, sizeof(FsrEasuParameters)};
+		vk::PipelineLayoutCreateInfo layout {};
+		layout.setLayoutCount = 1;
+		layout.pSetLayouts = &m_fsr1_descriptors;
+		layout.pushConstantRangeCount = 1;
+		layout.pPushConstantRanges = &constants;
+		RequireVulkanSuccess(device.createPipelineLayout(&layout, nullptr, &m_fsr1_layout),
+		                     "create FSR1 pipeline layout");
+
+		const auto vertex = CompileSPV(GPU_BLIT_FS_TRIANGLE_SPV, device);
+		const auto easu_fragment = CompileSPV(GPU_FSR1_EASU_SPV, device);
+		std::array<vk::PipelineShaderStageCreateInfo, 2> stages {};
+		stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+		stages[0].module = vertex;
+		stages[0].pName = "main";
+		stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+		stages[1].module = easu_fragment;
+		stages[1].pName = "main";
+
+		vk::PipelineVertexInputStateCreateInfo vertex_input {};
+		vk::PipelineInputAssemblyStateCreateInfo assembly {};
+		assembly.topology = vk::PrimitiveTopology::eTriangleList;
+		vk::PipelineViewportStateCreateInfo viewport {};
+		viewport.viewportCount = 1;
+		viewport.scissorCount = 1;
+		vk::PipelineRasterizationStateCreateInfo rasterization {};
+		rasterization.lineWidth = 1.0f;
+		vk::PipelineMultisampleStateCreateInfo multisample {};
+		multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+		vk::PipelineColorBlendAttachmentState attachment {};
+		attachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
+		                            vk::ColorComponentFlagBits::eG |
+		                            vk::ColorComponentFlagBits::eB |
+		                            vk::ColorComponentFlagBits::eA;
+		vk::PipelineColorBlendStateCreateInfo blend {};
+		blend.attachmentCount = 1;
+		blend.pAttachments = &attachment;
+		const std::array dynamic_states {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+		vk::PipelineDynamicStateCreateInfo dynamic {};
+		dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+		dynamic.pDynamicStates = dynamic_states.data();
+		vk::PipelineRenderingCreateInfo rendering {};
+		rendering.colorAttachmentCount = 1;
+		rendering.pColorAttachmentFormats = &m_format;
+		vk::GraphicsPipelineCreateInfo create {};
+		create.pNext = &rendering;
+		create.stageCount = static_cast<uint32_t>(stages.size());
+		create.pStages = stages.data();
+		create.pVertexInputState = &vertex_input;
+		create.pInputAssemblyState = &assembly;
+		create.pViewportState = &viewport;
+		create.pRasterizationState = &rasterization;
+		create.pMultisampleState = &multisample;
+		create.pColorBlendState = &blend;
+		create.pDynamicState = &dynamic;
+		create.layout = m_fsr1_layout;
+		RequireVulkanSuccess(
+		    device.createGraphicsPipelines(nullptr, 1, &create, nullptr, &m_fsr1_pipeline),
+		    "create FSR1 EASU pipeline");
+
+		const auto rcas_fragment = CompileSPV(GPU_FSR1_RCAS_SPV, device);
+		stages[1].module = rcas_fragment;
+		RequireVulkanSuccess(
+		    device.createGraphicsPipelines(nullptr, 1, &create, nullptr, &m_fsr1_rcas_pipeline),
+		    "create FSR1 RCAS pipeline");
+		device.destroyShaderModule(rcas_fragment, nullptr);
+		device.destroyShaderModule(easu_fragment, nullptr);
+		device.destroyShaderModule(vertex, nullptr);
+	}
+
+	if (frame.view == nullptr) {
+		vk::ImageViewCreateInfo view {};
+		view.image = frame.image.image;
+		view.viewType = vk::ImageViewType::e2D;
+		view.format = frame.image.format;
+		view.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+		RequireVulkanSuccess(device.createImageView(&view, nullptr, &frame.view),
+		                     "create FSR1 source image view");
+	}
+
+	const bool use_easu = frame.image.extent.width < rect.extent.width ||
+	                      frame.image.extent.height < rect.extent.height;
+	if (use_easu) {
+		const bool extent_changed = m_fsr1_intermediate.image == nullptr ||
+		                            m_fsr1_intermediate_extent.width != rect.extent.width ||
+		                            m_fsr1_intermediate_extent.height != rect.extent.height ||
+		                            m_fsr1_intermediate.format != m_format;
+		if (extent_changed) {
+			// A previously submitted presentation may still sample this image. Serialize the
+			// rare resize path before destroying and reallocating its Vulkan image/view.
+			if (m_fsr1_intermediate.image != nullptr) {
+				Common::LockGuard queue_lock(graphics.queue_mutex);
+				RequireVulkanSuccess(graphics.queue.waitIdle(),
+				                     "wait for FSR1 intermediate image resize");
+			}
+			if (m_fsr1_intermediate_view != nullptr) {
+				device.destroyImageView(m_fsr1_intermediate_view, nullptr);
+				m_fsr1_intermediate_view = nullptr;
+			}
+			if (m_fsr1_intermediate.image != nullptr) {
+				graphics.DeleteImage(m_fsr1_intermediate);
+			}
+			vk::ImageCreateInfo image_info {};
+			image_info.imageType = vk::ImageType::e2D;
+			image_info.extent = {rect.extent.width, rect.extent.height, 1};
+			image_info.mipLevels = 1;
+			image_info.arrayLayers = 1;
+			image_info.format = m_format;
+			image_info.tiling = vk::ImageTiling::eOptimal;
+			image_info.usage = vk::ImageUsageFlagBits::eColorAttachment |
+			                   vk::ImageUsageFlagBits::eSampled;
+			image_info.sharingMode = vk::SharingMode::eExclusive;
+			image_info.samples = vk::SampleCountFlagBits::e1;
+			image_info.initialLayout = vk::ImageLayout::eUndefined;
+			if (!graphics.CreateImage(image_info, m_fsr1_intermediate)) {
+				EXIT("failed to allocate FSR1 intermediate image, extent=%ux%u format=%d\\n",
+				     rect.extent.width, rect.extent.height, static_cast<int>(m_format));
+			}
+			vk::ImageViewCreateInfo view {};
+			view.image = m_fsr1_intermediate.image;
+			view.viewType = vk::ImageViewType::e2D;
+			view.format = m_format;
+			view.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+			RequireVulkanSuccess(
+			    device.createImageView(&view, nullptr, &m_fsr1_intermediate_view),
+			    "create FSR1 intermediate image view");
+			m_fsr1_intermediate_extent = rect.extent;
+		}
+	}
+
+	if (use_easu) {
+		// Pass 1: EASU scales the game's presentation surface into an intermediate image.
+		TransitFsr1Intermediate(command, vk::ImageLayout::eColorAttachmentOptimal,
+		                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+		                        vk::AccessFlagBits2::eColorAttachmentWrite);
+		FsrEasuParameters easu {};
+		FsrEasuCon(easu.con0, easu.con1, easu.con2, easu.con3,
+		           static_cast<float>(frame.image.extent.width),
+		           static_cast<float>(frame.image.extent.height),
+		           static_cast<float>(frame.image.extent.width),
+		           static_cast<float>(frame.image.extent.height),
+		           static_cast<float>(rect.extent.width),
+		           static_cast<float>(rect.extent.height));
+		easu.output_offset[0] = 0;
+		easu.output_offset[1] = 0;
+		const vk::DescriptorImageInfo source_image {
+		    m_fsr1_sampler, frame.view, vk::ImageLayout::eShaderReadOnlyOptimal};
+		vk::WriteDescriptorSet source_write {};
+		source_write.dstBinding = 0;
+		source_write.descriptorCount = 1;
+		source_write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		source_write.pImageInfo = &source_image;
+		command.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, m_fsr1_layout, 0, 1,
+		                             &source_write);
+		command.pushConstants(m_fsr1_layout, vk::ShaderStageFlagBits::eFragment, 0,
+		                      sizeof(easu), &easu);
+		command.bindPipeline(vk::PipelineBindPoint::eGraphics, m_fsr1_pipeline);
+		vk::RenderingAttachmentInfo easu_attachment {};
+		easu_attachment.imageView = m_fsr1_intermediate_view;
+		easu_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+		easu_attachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+		easu_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+		vk::RenderingInfo easu_rendering {};
+		easu_rendering.renderArea.extent = rect.extent;
+		easu_rendering.layerCount = 1;
+		easu_rendering.colorAttachmentCount = 1;
+		easu_rendering.pColorAttachments = &easu_attachment;
+		command.beginRendering(&easu_rendering);
+		const vk::Viewport easu_viewport {0.0f, 0.0f, static_cast<float>(rect.extent.width),
+		                                  static_cast<float>(rect.extent.height), 0.0f, 1.0f};
+		const vk::Rect2D easu_scissor {{0, 0}, rect.extent};
+		command.setViewport(0, 1, &easu_viewport);
+		command.setScissor(0, 1, &easu_scissor);
+		command.draw(3, 1, 0, 0);
+		command.endRendering();
+
+
+	}
+
+	// RCAS sharpens the EASU result or the game's same-size output surface.
+	if (use_easu) {
+		TransitFsr1Intermediate(command, vk::ImageLayout::eShaderReadOnlyOptimal,
+		                        vk::PipelineStageFlagBits2::eFragmentShader,
+		                        vk::AccessFlagBits2::eShaderRead);
+	}
+	FsrRcasParameters rcas {};
+	const float sharpness_stops =
+	    (100.0f - static_cast<float>(Config::GetFsr1Sharpness())) * (4.0f / 100.0f);
+	FsrRcasCon(rcas.con, sharpness_stops);
+	rcas.output_offset[0] = rect.offset.x;
+	rcas.output_offset[1] = rect.offset.y;
+	const auto rcas_source_view = use_easu ? m_fsr1_intermediate_view : frame.view;
+	const vk::DescriptorImageInfo upscaled_image {
+	    m_fsr1_sampler, rcas_source_view, vk::ImageLayout::eShaderReadOnlyOptimal};
+	vk::WriteDescriptorSet upscaled_write {};
+	upscaled_write.dstBinding = 0;
+	upscaled_write.descriptorCount = 1;
+	upscaled_write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+	upscaled_write.pImageInfo = &upscaled_image;
+	command.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, m_fsr1_layout, 0, 1,
+	                             &upscaled_write);
+	command.pushConstants(m_fsr1_layout, vk::ShaderStageFlagBits::eFragment, 0,
+	                      sizeof(rcas), &rcas);
+	command.bindPipeline(vk::PipelineBindPoint::eGraphics, m_fsr1_rcas_pipeline);
+	vk::RenderingAttachmentInfo rcas_attachment {};
+	rcas_attachment.imageView = m_image_views[m_image_index];
+	rcas_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+	rcas_attachment.loadOp = vk::AttachmentLoadOp::eLoad;
+	rcas_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+	vk::RenderingInfo rcas_rendering {};
+	rcas_rendering.renderArea.extent = m_extent;
+	rcas_rendering.layerCount = 1;
+	rcas_rendering.colorAttachmentCount = 1;
+	rcas_rendering.pColorAttachments = &rcas_attachment;
+	command.beginRendering(&rcas_rendering);
+	const vk::Viewport rcas_viewport {static_cast<float>(rect.offset.x),
+	                                  static_cast<float>(rect.offset.y),
+	                                  static_cast<float>(rect.extent.width),
+	                                  static_cast<float>(rect.extent.height), 0.0f, 1.0f};
+	command.setViewport(0, 1, &rcas_viewport);
+	command.setScissor(0, 1, &rect);
+	command.draw(3, 1, 0, 0);
+	command.endRendering();
+}
+
 void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* source,
                                       const Presenter::Layer& overlay, bool draw_system_overlay) {
-	auto       vk_command      = command.Handle();
-	const bool convert_source  = source != nullptr && source->hdr && !m_hdr_active;
-	const bool blit_source     = source != nullptr && !convert_source;
-	const bool draw_overlay    = overlay.frame != nullptr;
-	const bool draw_attachment = convert_source || draw_overlay || draw_system_overlay;
+	auto       vk_command     = command.Handle();
+	const bool convert_source = source != nullptr && source->hdr && !m_hdr_active;
+	const bool draw_overlay = overlay.frame != nullptr;
+	const auto* aspect_source = source != nullptr ? source : overlay.frame;
+	const auto game_rect = !Config::StretchEnabled() && aspect_source != nullptr
+	                           ? FitAspect(aspect_source->image.extent, m_extent)
+	                           : vk::Rect2D {{0, 0}, m_extent};
+	const bool fsr1_format_supported =
+	    source != nullptr &&
+	    (source->image.format == vk::Format::eR8G8B8A8Unorm ||
+	     source->image.format == vk::Format::eB8G8R8A8Unorm);
+	const auto fsr1_output_features = m_window.graphic_ctx.GetFormatProperties(m_format).optimalTilingFeatures;
+	const auto fsr1_output_required =
+	    vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eSampledImage;
+	const bool fsr1_output_supported =
+	    (fsr1_output_features & fsr1_output_required) == fsr1_output_required;
+	const bool fsr1_source = Config::Fsr1Enabled() && fsr1_format_supported && fsr1_output_supported &&
+	                         !source->hdr && !m_hdr_active &&
+	                         source->image.extent.width <= game_rect.extent.width &&
+	                         source->image.extent.height <= game_rect.extent.height;
+	const bool blit_source = source != nullptr && !convert_source && !fsr1_source;
+	const bool draw_attachment = convert_source || fsr1_source || draw_overlay || draw_system_overlay;
 	if (blit_source) {
 		source->Transit(vk_command, vk::ImageLayout::eTransferSrcOptimal,
 		                vk::AccessFlagBits2::eTransferRead);
 	}
-	if (convert_source) {
+	if (convert_source || fsr1_source) {
 		source->Transit(vk_command, vk::ImageLayout::eShaderReadOnlyOptimal,
 		                vk::AccessFlagBits2::eShaderRead);
 	}
@@ -789,10 +1155,6 @@ void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* 
 	                           vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags {}, 0,
 	                           nullptr, 0, nullptr, 1, &to_transfer);
 
-	const auto* aspect_source = source != nullptr ? source : overlay.frame;
-	const auto  game_rect     = !Config::StretchEnabled() && aspect_source != nullptr
-	                               ? FitAspect(aspect_source->image.extent, m_extent)
-	                               : vk::Rect2D {{0, 0}, m_extent};
 	if (source == nullptr || game_rect.extent != m_extent) {
 		const vk::ClearColorValue black {};
 		vk_command.clearColorImage(m_images[m_image_index], vk::ImageLayout::eTransferDstOptimal,
@@ -864,6 +1226,12 @@ void Swapchain::RecordPresentCommands(CommandBuffer& command, Presenter::Frame* 
 		};
 		if (convert_source) {
 			DrawLayer(vk_command, {source, 0, false}, game_rect);
+			if (draw_overlay || draw_system_overlay) {
+				attachment_barrier();
+			}
+		}
+		if (fsr1_source) {
+			DrawFsr1(vk_command, *source, game_rect);
 			if (draw_overlay || draw_system_overlay) {
 				attachment_barrier();
 			}

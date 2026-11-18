@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/renderDraw.h"
 
 #include "common/assert.h"
@@ -19,6 +20,7 @@
 #include "graphics/host_gpu/renderer/depthRenderTarget.h"
 #include "graphics/host_gpu/renderer/pipeline/pipelineCache.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vulkanCommon.h"
@@ -443,6 +445,50 @@ struct DrawCallInfo {
 	[[nodiscard]] const char* Name() const { return indexed ? "DrawIndex" : "DrawIndexAuto"; }
 };
 
+// Keep the render area inside the host image that backs each guest render target. Aliased
+// transient targets can retain guest dimensions larger than the allocation currently in cache;
+// on some drivers that mismatch can turn a draw into a GPU timeout/device loss.
+static vk::Extent2D ClampToBacking(const Image& image, uint32_t base_level, vk::Extent2D extent,
+                                  uint64_t address, const char* kind) {
+	vk::Extent2D backing {std::max(image.info.extent.width >> base_level, 1u),
+	                      std::max(image.info.extent.height >> base_level, 1u)};
+	if (image.backing.image != nullptr) {
+		backing.width  = std::min(backing.width, std::max(image.backing.extent.width >> base_level, 1u));
+		backing.height = std::min(backing.height, std::max(image.backing.extent.height >> base_level, 1u));
+	}
+	if (backing.width >= extent.width && backing.height >= extent.height) {
+		return extent;
+	}
+	static std::atomic<uint32_t> reports {0};
+	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
+		Log::WriteToConsoleAndLog(fmt::format(
+		    "Render target: {} 0x{:016x} is {}x{} but its image is {}x{} (level {}); "
+		    "render area bounded to the image\n",
+		    kind, address, extent.width, extent.height, backing.width, backing.height, base_level));
+	}
+	return {std::min(extent.width, backing.width), std::min(extent.height, backing.height)};
+}
+
+static uint32_t ClampLayersToBacking(const Image& image, uint32_t base_layer, uint32_t layer_count,
+                                     uint64_t address, const char* kind) {
+	if (image.backing.image == nullptr) {
+		return layer_count;
+	}
+	const uint32_t available =
+	    image.backing.layers > base_layer ? image.backing.layers - base_layer : 1u;
+	if (layer_count <= available) {
+		return layer_count;
+	}
+	static std::atomic<uint32_t> reports {0};
+	if (reports.fetch_add(1, std::memory_order_relaxed) < 32u) {
+		Log::WriteToConsoleAndLog(fmt::format(
+		    "Render target: {} 0x{:016x} renders {} layers from layer {} but its image has {}; "
+		    "layers bounded to the image\n",
+		    kind, address, layer_count, base_layer, image.backing.layers));
+	}
+	return available;
+}
+
 RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderColorInfo* colors,
                                                  uint32_t color_count, RenderDepthInfo& depth,
                                                  vk::ImageAspectFlags& feedback_aspects,
@@ -471,10 +517,13 @@ RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderCo
 		              ImageSubresourceRange {view.base_level, view.level_count, view.base_layer,
 		                                     view.layer_count},
 		              buffer.Handle());
-		const auto extent       = target.Extent();
+		const auto extent = ClampToBacking(image, view.base_level, target.Extent(),
+		                                   target.desc.info.data.address, "color");
 		state.width             = std::min(state.width, extent.width);
 		state.height            = std::min(state.height, extent.height);
-		state.num_layers        = std::min(state.num_layers, view.layer_count);
+		state.num_layers        = std::min(state.num_layers,
+		                                   ClampLayersToBacking(image, view.base_layer, view.layer_count,
+		                                                        target.desc.info.data.address, "color"));
 		state.num_color_attachments = std::max(state.num_color_attachments, target.target_slot + 1);
 		auto& attachment            = state.color_attachments[target.target_slot];
 		attachment.image_view   = image_view;
@@ -534,9 +583,15 @@ RenderState RenderExecutor::AcquireRenderTargets(CommandBuffer& buffer, RenderCo
 		              ImageSubresourceRange {view.base_level, view.level_count, view.base_layer,
 		                                     view.layer_count},
 		              buffer.Handle());
-		state.width               = std::min(state.width, depth.desc.info.extent.width);
-		state.height              = std::min(state.height, depth.desc.info.extent.height);
-		state.num_layers          = std::min(state.num_layers, view.layer_count);
+		const auto depth_extent =
+		    ClampToBacking(image, view.base_level,
+		                   {depth.desc.info.extent.width, depth.desc.info.extent.height},
+		                   depth.desc.info.data.address, "depth");
+		state.width  = std::min(state.width, depth_extent.width);
+		state.height = std::min(state.height, depth_extent.height);
+		state.num_layers          = std::min(state.num_layers,
+		                                     ClampLayersToBacking(image, view.base_layer, view.layer_count,
+		                                                          depth.desc.info.data.address, "depth"));
 		const auto aspects        = ImageViewOps::DepthAspectMask(depth.desc.view_info.format);
 		auto&      attachment     = state.depth_stencil_attachment;
 		attachment.image_view     = image_view;
@@ -931,9 +986,211 @@ static void CommitIndexBuffer(vk::CommandBuffer vk_buffer, const PreparedIndexBu
 	vk_buffer.bindIndexBuffer(prepared.buffer, prepared.offset, prepared.type);
 }
 
+static std::atomic<uint32_t> g_diagnostic_draw_snapshot_count = 0;
+
+static void LogDiagnosticShaderResources(const char* stage_name, const ShaderStageRuntime& stage) {
+	if (stage.resources == nullptr) {
+		LOGF("GPU diagnostic %s resources: unavailable\n", stage_name);
+		return;
+	}
+
+	const auto& resources = *stage.resources;
+	LOGF("GPU diagnostic %s resources: buffers=%zu images=%zu samplers=%zu user_data_dwords=%zu\n",
+	     stage_name, resources.buffers.size(), resources.images.size(),
+	     resources.samplers.size(), resources.user_data.size());
+
+	const auto log_descriptors = [stage_name](const char* kind,
+	                                           const auto& descriptors) {
+		const auto count = std::min<size_t>(descriptors.size(), 32);
+		for (size_t i = 0; i < count; i++) {
+			const auto& descriptor = descriptors[i];
+			uint32_t words[8] = {};
+			const auto word_count = std::min<uint32_t>(
+			    descriptor.dword_count, 8u);
+			for (uint32_t j = 0; j < word_count; j++) {
+				words[j] = descriptor.dwords[j];
+			}
+			LOGF("GPU diagnostic %s %s[%zu] dwords=%u data=%08" PRIx32 " %08" PRIx32
+			     " %08" PRIx32 " %08" PRIx32 " %08" PRIx32 " %08" PRIx32
+			     " %08" PRIx32 " %08" PRIx32 "\n",
+			     stage_name, kind, i, descriptor.dword_count, words[0], words[1], words[2],
+			     words[3], words[4], words[5], words[6], words[7]);
+		}
+		if (descriptors.size() > count) {
+			LOGF("GPU diagnostic %s %s: omitted %zu additional descriptor(s)\n",
+			     stage_name, kind, descriptors.size() - count);
+		}
+	};
+
+	log_descriptors("buffer", resources.buffers);
+	log_descriptors("image", resources.images);
+	log_descriptors("sampler", resources.samplers);
+
+	if (stage.module == nullptr) {
+		LOGF("GPU diagnostic %s compiled shader metadata: unavailable\n", stage_name);
+		return;
+	}
+	const auto& shader_info = stage.module->info.info;
+	const auto image_count = std::min(resources.images.size(), shader_info.images.size());
+	for (size_t i = 0; i < image_count && i < 32; i++) {
+		const auto& metadata = shader_info.images[i];
+		ShaderTextureResource descriptor {};
+		std::memcpy(&descriptor, resources.images[i].dwords.data(), sizeof(descriptor));
+		const auto max_mip = metadata.r128 ? descriptor.LastLevel() : descriptor.MaxMip();
+		const auto levels = descriptor.Type() == Prospero::ImageType::kColor2DMsaa ||
+		                    descriptor.Type() == Prospero::ImageType::kColor2DMsaaArray
+		                        ? 1u
+		                        : static_cast<uint32_t>(max_mip) + 1u;
+		LOGF("GPU diagnostic %s image[%zu] meta_class=%u sampled=%s read=%s written=%s "
+		     "atomic=%s heap=%s numeric=%u dimension=%u mip_mode=%u mip_count=%u "
+		     "guest_addr=0x%010" PRIx64 " descriptor_type=%u format=%u extent=%ux%u "
+		     "depth=%u tile=%u levels=%u base_level=%u last_level=%u max_mip=%u\n",
+		     stage_name, i, static_cast<uint32_t>(metadata.resource_class),
+		     metadata.resource_class == ShaderRecompiler::IR::ImageResourceClass::Sampled
+		         ? "true"
+		         : "false",
+		     metadata.read ? "true" : "false", metadata.written ? "true" : "false",
+		     metadata.atomic ? "true" : "false", metadata.heap ? "true" : "false",
+		     static_cast<uint32_t>(metadata.numeric_class),
+		     static_cast<uint32_t>(metadata.dimension), static_cast<uint32_t>(metadata.mip_mode),
+		     metadata.mip_count, descriptor.Base40(), static_cast<uint32_t>(descriptor.Type()),
+		     static_cast<uint32_t>(descriptor.Format()),
+		     static_cast<uint32_t>(descriptor.Width5()) + 1u,
+		     static_cast<uint32_t>(descriptor.Height5()) + 1u,
+		     static_cast<uint32_t>(descriptor.Depth()) + 1u,
+		     static_cast<uint32_t>(descriptor.TileMode()), levels,
+		     static_cast<uint32_t>(descriptor.BaseLevel()),
+		     static_cast<uint32_t>(descriptor.LastLevel()), static_cast<uint32_t>(max_mip));
+	}
+	if (shader_info.images.size() != resources.images.size()) {
+		LOGF("GPU diagnostic %s image metadata/descriptor count mismatch: %zu/%zu\n",
+		     stage_name, shader_info.images.size(), resources.images.size());
+	}
+	for (size_t i = 0; i < shader_info.sampled_pairs.size() && i < 32; i++) {
+		const auto& pair = shader_info.sampled_pairs[i];
+		LOGF("GPU diagnostic %s sampled_pair[%zu]: image=%u sampler=%u first_use_pc=0x%08"
+		     PRIx32 "\n",
+		     stage_name, i, pair.image, pair.sampler, pair.first_use_pc);
+	}
+	for (size_t i = 0; i < shader_info.samplers.size() && i < 32; i++) {
+		const auto& metadata = shader_info.samplers[i];
+		if (metadata.snapshot_index >= resources.samplers.size()) {
+			LOGF("GPU diagnostic %s sampler[%zu]: snapshot_index=%u out of range (%zu)\n",
+			     stage_name, i, metadata.snapshot_index, resources.samplers.size());
+			continue;
+		}
+		ShaderSamplerResource descriptor {};
+		std::memcpy(&descriptor,
+		            resources.samplers[metadata.snapshot_index].dwords.data(),
+		            sizeof(descriptor));
+		LOGF("GPU diagnostic %s sampler[%zu]: source=%u snapshot_index=%u clamp=%u/%u/%u "
+		     "filter=%u/%u/%u mip=%u lod=%u-%u bias=%d\n",
+		     stage_name, i, metadata.source, metadata.snapshot_index,
+		     static_cast<uint32_t>(descriptor.ClampX()),
+		     static_cast<uint32_t>(descriptor.ClampY()),
+		     static_cast<uint32_t>(descriptor.ClampZ()),
+		     static_cast<uint32_t>(descriptor.XyMagFilter()),
+		     static_cast<uint32_t>(descriptor.XyMinFilter()),
+		     static_cast<uint32_t>(descriptor.ZFilter()),
+		     static_cast<uint32_t>(descriptor.MipFilter()),
+		     static_cast<uint32_t>(descriptor.MinLod()),
+		     static_cast<uint32_t>(descriptor.MaxLod()),
+		     static_cast<int32_t>(descriptor.LodBias()));
+	}
+	for (size_t i = 0; i < resources.user_data.size() && i < 32; i++) {
+		LOGF("GPU diagnostic %s user_data[%zu]=0x%08" PRIx32 "\n",
+		     stage_name, i, resources.user_data[i]);
+	}
+}
+
+static void LogDiagnosticDrawState(const CommandBuffer& buffer, const DrawCallInfo& draw,
+	                               const DrawRenderState& state, uint32_t index_type_and_size,
+	                               const void* index_addr) {
+	const auto log_id = g_diagnostic_draw_snapshot_count.fetch_add(1, std::memory_order_relaxed);
+	if (log_id >= 8) {
+		return;
+	}
+
+	const auto& vertex = state.vertex_info[0];
+	const auto  vertex_hash = vertex.stage.module->info.shader_hash;
+	const auto  pixel_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	const auto& user_config = buffer.GetUserConfig();
+
+	LOGF("GPU diagnostic DrawSnapshot[%u]: frame=%d VS=0x%016" PRIx64
+	     " PS=0x%016" PRIx64 " indexed=%s count=%u instances=%u index_type=0x%08" PRIx32
+	     " index_addr=0x%016" PRIx64 " primitive=%u topology=%s restart=%s "
+	     "color_count=%u mrt_mask=0x%08" PRIx32 "\n",
+	     log_id, buffer.GetContext().GetGpu().GetFrameNum(), vertex_hash, pixel_hash,
+	     draw.indexed ? "true" : "false", draw.index_count, draw.instance_count,
+	     index_type_and_size, reinterpret_cast<uint64_t>(index_addr),
+	     static_cast<uint32_t>(user_config.GetPrimType()), vk::to_string(state.topology).c_str(),
+	     state.primitive_restart_enable ? "true" : "false", state.color_count, state.mrt_mask);
+
+	const auto color_limit = std::min<uint32_t>(state.color_count, RENDER_COLOR_ATTACHMENTS_MAX);
+	for (uint32_t i = 0; i < color_limit; i++) {
+		const auto& color = state.color_info[i];
+		const auto extent = color.Extent();
+		LOGF("GPU diagnostic DrawSnapshot[%u]: color[%u] image=%s slot=%u "
+		     "guest_addr=0x%010" PRIx64 " guest_size=0x%016" PRIx64
+		     " extent=%ux%u format=%s mip=%u layer=%u\n",
+		     log_id, i, color.image_id ? "yes" : "no", color.target_slot,
+		     color.desc.info.data.address, color.desc.info.data.size, extent.width, extent.height,
+		     vk::to_string(color.desc.view_info.format).c_str(), color.guest_mip_level,
+		     color.guest_array_layer);
+	}
+
+	const auto& depth = state.depth_info;
+	LOGF("GPU diagnostic DrawSnapshot[%u]: depth image=%s guest_addr=0x%010" PRIx64
+	     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s "
+	     "test=%s write=%s compare=%s clear=%s stencil_test=%s stencil_clear=%s "
+	     "PS_depth_export=%s PS_early_z=%s PS_kill=%s target_shader_mask=0x%08" PRIx32 "\n",
+	     log_id, depth.image_id ? "yes" : "no", depth.desc.info.data.address,
+	     depth.desc.info.data.size, depth.desc.info.extent.width, depth.desc.info.extent.height,
+	     vk::to_string(depth.desc.view_info.format).c_str(),
+	     depth.depth_test_enable ? "true" : "false",
+	     depth.depth_write_enable ? "true" : "false",
+	     vk::to_string(depth.depth_compare_op).c_str(),
+	     depth.depth_clear_enable ? "true" : "false",
+	     depth.stencil_test_enable ? "true" : "false",
+	     depth.stencil_clear_enable ? "true" : "false",
+	     state.ps_input_info.ps_depth_export_enable ? "true" : "false",
+	     state.ps_input_info.ps_early_z ? "true" : "false",
+	     state.ps_input_info.ps_pixel_kill_enable ? "true" : "false",
+	     state.ps_input_info.target_shader_mask);
+
+	LOGF("GPU diagnostic DrawSnapshot[%u]: VS buffers=%d attributes=%d dynamic_fetch=%s "
+	     "PS active=%s PS inputs=%u\n",
+	     log_id, vertex.buffers_num, vertex.resources_num,
+	     vertex.has_dynamic_vertex_fetch ? "true" : "false",
+	     state.ps_active ? "true" : "false", state.ps_input_info.input_num);
+	for (int i = 0; i < vertex.buffers_num; i++) {
+		const auto& vb = vertex.buffers[i];
+		LOGF("GPU diagnostic DrawSnapshot[%u]: vb[%d] addr=0x%010" PRIx64
+		     " stride=%u records=%u fetch_index=%u\n",
+		     log_id, i, vb.addr, vb.stride, vb.num_records, vb.fetch_index);
+	}
+
+	LogDiagnosticShaderResources("VS", vertex.stage);
+	if (state.ps_active) {
+		LogDiagnosticShaderResources("PS", state.ps_input_info.stage);
+	}
+}
+
 static void LogDrawStateIfNeeded(const CommandBuffer& buffer, const DrawCallInfo& draw,
 	                             const DrawRenderState& state, uint32_t index_type_and_size,
-                                 const void* index_addr) {
+	                             const void* index_addr) {
+	const auto vertex_hash = state.vertex_info[0].stage.module->info.shader_hash;
+	const auto pixel_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	// Capture the exact Demon’s Souls shader pair identified by the GTX 970 device-loss report.
+	// This narrowly scoped snapshot is independent of the optional verbose graphics dump.
+	const bool diagnostic_match =
+	    vertex_hash == 0x004c650d72ecd57cull && pixel_hash == 0x94fd11e8abbdc3c8ull;
+	if (diagnostic_match) {
+		LogDiagnosticDrawState(buffer, draw, state, index_type_and_size, index_addr);
+	}
+
 	if (!graphics_debug_dump_enabled()) {
 		return;
 	}
@@ -1206,6 +1463,13 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
 	auto&         occlusion_queries = m_context.GetOcclusionQueries();
 	const int32_t occlusion_query   = occlusion_queries.Begin(vk_buffer);
+	const auto vertex_shader_hash = state.vertex_info[0].stage.module->info.shader_hash;
+	const auto pixel_shader_hash =
+	    state.ps_active ? state.ps_input_info.stage.module->info.shader_hash : 0;
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::GraphicsDrawBegin,
+	                        vertex_shader_hash, pixel_shader_hash, draw.index_count,
+	                        draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()));
 	if (mesh_task) {
 		vk_buffer.drawMeshTasksEXT(emit.indirect.count, 1, 1);
 	} else if (mesh_active) {
@@ -1219,6 +1483,10 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 		vk_buffer.drawIndirect(args_buffer.first->Handle(), args_buffer.second,
 		                       emit.indirect.count, emit.indirect.stride);
 	}
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), vk_buffer,
+	                        DiagnosticCheckpointKind::GraphicsDrawEnd,
+	                        vertex_shader_hash, pixel_shader_hash, draw.index_count,
+	                        draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()));
 	occlusion_queries.End(vk_buffer, occlusion_query);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::Draws);
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::DrawInstances, draw.instance_count);

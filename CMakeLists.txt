@@ -1,3 +1,4 @@
+# GTX (Maxwell) fork changes: modified 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 cmake_minimum_required(VERSION 3.19...4.3)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
@@ -308,6 +309,7 @@ function(add_gpu_blit_shader shader_name shader_file)
 		COMMAND ${CMAKE_COMMAND} -DINPUT=${shader_spv} -DOUTPUT=${shader_header}
 		        -DSYMBOL=${shader_symbol} -P "${KYTY_SOURCE_DIR}/embed_spirv.cmake"
 		DEPENDS "${shader_source}" "${gpu_tiler_shader_dir}/gpu_video_out_hdr10_to_sdr.inc"
+		        "${gpu_tiler_shader_dir}/ffx_a.h" "${gpu_tiler_shader_dir}/ffx_fsr1.h"
 		VERBATIM
 	)
 	set(gpu_blit_shader_headers ${gpu_blit_shader_headers} "${shader_header}" PARENT_SCOPE)
@@ -317,6 +319,8 @@ add_gpu_blit_shader(gpu_blit_color_to_ms_depth gpu_blit_color_to_ms_depth.frag)
 add_gpu_blit_shader(gpu_video_out_overlay gpu_video_out_overlay.frag)
 add_gpu_blit_shader(gpu_imgui_hdr gpu_video_out_overlay.frag -DIMGUI_HDR=1)
 add_gpu_blit_shader(gpu_pssr_linear gpu_pssr_linear.comp)
+add_gpu_blit_shader(gpu_fsr1_easu gpu_fsr1_easu.frag)
+add_gpu_blit_shader(gpu_fsr1_rcas gpu_fsr1_rcas.frag)
 # At SPIR-V 1.6 glslang declares a task shader's workgroup size with LocalSizeId, which needs maintenance4.
 add_gpu_blit_shader(gpu_mesh_indirect gpu_mesh_indirect.task --target-env spirv1.5)
 list(APPEND kyty_emulator_src ${gpu_blit_shader_headers})
@@ -712,6 +716,8 @@ if(BUILD_TESTING)
 	add_test(NAME save_data_dialog COMMAND $<TARGET_FILE:save_data_dialog_tests>)
 	add_test(NAME http_uri_parse COMMAND $<TARGET_FILE:http_uri_parse_tests>)
 	add_test(NAME rtc COMMAND $<TARGET_FILE:rtc_tests>)
+	add_test(NAME depth_texture_encoding
+		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --depth-texture-encoding-only)
 	add_test(NAME shader_recompiler_compute COMMAND $<TARGET_FILE:shader_recompiler_compute_tests>)
 	add_test(NAME shader_recompiler_tessellation
 		COMMAND $<TARGET_FILE:shader_recompiler_compute_tests> --tessellation-only)

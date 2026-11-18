@@ -1,8 +1,10 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/masterSemaphore.h"
 
 #include "common/assert.h"
 #include "common/debugCounters.h"
 #include "graphics/host_gpu/graphicContext.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 
 namespace Libs::Graphics {
 
@@ -25,7 +27,10 @@ MasterSemaphore::~MasterSemaphore() {
 void MasterSemaphore::Refresh() {
 	uint64_t   counter = 0;
 	const auto result  = m_graphics.device.getSemaphoreCounterValue(m_semaphore, &counter);
-	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);
+	if (result != vk::Result::eSuccess) {
+		DeviceLossReport(m_graphics, result);
+		EXIT("vkGetSemaphoreCounterValue failed: %s\\n", vk::to_string(result).c_str());
+	}
 
 	auto known = m_gpu_tick.load(std::memory_order_acquire);
 	while (known < counter &&
@@ -51,7 +56,11 @@ void MasterSemaphore::Wait(uint64_t tick) {
 	Common::DebugCounters::ScopedTimer timer(Common::DebugCounters::Counter::GpuWaits,
 	                                         Common::DebugCounters::Counter::GpuWaitNs);
 	const auto result = m_graphics.device.waitSemaphores(&wait_info, UINT64_MAX);
-	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);
+	if (result != vk::Result::eSuccess) {
+		DeviceLossReport(m_graphics, result);
+		EXIT("vkWaitSemaphores failed: %s, tick=%llu\\n",
+		     vk::to_string(result).c_str(), static_cast<unsigned long long>(tick));
+	}
 	Refresh();
 }
 

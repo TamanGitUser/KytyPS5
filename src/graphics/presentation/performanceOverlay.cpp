@@ -573,6 +573,77 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		Row("Machine", Percent(host.system_cpu_percent),
 		    host.system_cpu_percent ? std::optional(LevelColor(*host.system_cpu_percent, 70, 90))
 		                            : std::nullopt);
+		Row("PM4 processing",
+		    Fmt("%.0f ms/s  (%.0f lists/s)",
+		        Rate(shown, Counter::Pm4ProcessNs) / 1e6,
+		        Rate(shown, Counter::Pm4ProcessCalls)));
+		Row("  PM4 handlers (est.)",
+		    Fmt("%.0f ms/s  (%.0f packets/s)",
+		        Rate(shown, Counter::Pm4HandlerEstimatedNs) / 1e6,
+		        Rate(shown, Counter::Pm4HandlerPackets)));
+		Row("  GPU callbacks",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::GpuCommandCallbackNs) / 1e6,
+		        Rate(shown, Counter::GpuCommandCallbacks)));
+		Row("  Indirect fallback",
+		    Fmt("%.0f draws/s  %.1f ms/s",
+		        Rate(shown, Counter::IndirectFallbackDraws),
+		        Rate(shown, Counter::IndirectFallbackNs) / 1e6));
+		Row("  Dispatch host",
+		    Fmt("%.1f ms/s  (%.0f calls/s)",
+		        Rate(shown, Counter::DispatchHostNs) / 1e6,
+		        Rate(shown, Counter::DispatchHostCalls)));
+		Row("  Dispatch direct / indirect",
+		    Fmt("%.0f / %.0f calls/s",
+		        Rate(shown, Counter::DispatchDirectCalls),
+		        Rate(shown, Counter::DispatchIndirectCalls)));
+		Row("  Compute program lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeProgramNs) / 1e6));
+		Row("    Compute parameter preparation",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeParamsNs) / 1e6));
+		Row("    Program key / map lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeKeyLookupNs) / 1e6));
+		Row("    Cached call-source refresh",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeCallRefreshNs) / 1e6));
+		Row("    Cached resource resolve",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeResourceResolveNs) / 1e6));
+		// Indirect descriptor time is a nested subset of the buffer/image/sampler rows.
+		Row("      SRT walk",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeSrtWalkNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtWalkCalls)));
+		Row("        setup / native walker / capture",
+		    Fmt("%.1f / %.1f / %.1f ms/s",
+		        Rate(shown, Counter::ComputeSrtSetupNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtExecuteNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtCaptureNs) / 1e6));
+		Row("      Indirect descriptor tables",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeIndirectDescriptorNs) / 1e6,
+		        Rate(shown, Counter::ComputeIndirectDescriptorCalls)));
+		Row("      Uniform fill analysis",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeUniformFillNs) / 1e6));
+		Row("      Buffer / image / sampler decode",
+		    Fmt("%.1f / %.1f / %.1f ms/s",
+		        Rate(shown, Counter::ComputeBufferMaterializationNs) / 1e6,
+		        Rate(shown, Counter::ComputeImageMaterializationNs) / 1e6,
+		        Rate(shown, Counter::ComputeSamplerMaterializationNs) / 1e6));
+		Row("      Specialization build",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeSpecializationBuildNs) / 1e6,
+		        Rate(shown, Counter::ComputeSpecializationBuildCalls)));
+		Row("    Program cache hits / misses",
+		    Fmt("%.0f / %.0f per s",
+		        Rate(shown, Counter::ComputeCacheHits),
+		        Rate(shown, Counter::ComputeCacheMisses)));
+		Row("  Compute pipeline lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputePipelineNs) / 1e6));
+		Row("  Compute resource binding",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeBindingsNs) / 1e6));
+		Row("  Compute barriers",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeBarrierNs) / 1e6));
+		Row("  Compute command recording",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeCommandNs) / 1e6));
 		if (host.thread_count) {
 			Row("Host threads", Fmt("%u", *host.thread_count));
 		}
@@ -632,12 +703,18 @@ void DrawGpu(const Snapshot& shown, const GraphicContext& graphics) {
 		const double fps = std::max(shown.fps, 1.0);
 		GpuActivityRows(shown);
 		Row("Instances", Fmt("%.0f/frame", Rate(shown, Counter::DrawInstances) / fps));
-		Row("Indirect draws", Fmt("%.0f/s", Rate(shown, Counter::IndirectDraws)));
+		Row("Indirect draws",
+		    Fmt("%.0f/s  (%.0f native batches/s)",
+		        Rate(shown, Counter::IndirectDraws),
+		        Rate(shown, Counter::IndirectNativeBatches)));
 		Row("Dispatches", Fmt("%.0f/frame  %.0f/s", Rate(shown, Counter::Dispatches) / fps,
 		                      Rate(shown, Counter::Dispatches)));
 		Row("Queue submits", Fmt("%.0f/s", Rate(shown, Counter::QueueSubmits)));
 		const auto faults = Rate(shown, Counter::GpuFaults);
-		Row("Write-tracking faults", Fmt("%.0f/s", faults), LevelColor(faults, 20000, 100000));
+		Row("Write-tracking faults",
+	    Fmt("%.0f/s  (%.1f ms/s)", faults,
+	        Rate(shown, Counter::GpuFaultHandlingNs) / 1e6),
+	    LevelColor(faults, 20000, 100000));
 		CompilationRows(shown);
 		ImGui::EndTable();
 	}

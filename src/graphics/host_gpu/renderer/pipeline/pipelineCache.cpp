@@ -117,8 +117,9 @@ bool ReadShaderGuestMemory(void*, uint64_t address, std::span<uint32_t> values) 
 	       Libs::LibKernel::Memory::TryReadBufferBacking(address, values.data(), values.size_bytes());
 }
 
-void DumpShader(std::span<const uint32_t> words, const std::string& name) {
-	if (!Config::GraphicsDebugDumpEnabled()) {
+void DumpShader(std::span<const uint32_t> words, const std::string& name,
+                bool force = false) {
+	if (!force && !Config::GraphicsDebugDumpEnabled()) {
 		return;
 	}
 	const auto path = Config::GetShaderLogFolder() / name;
@@ -130,6 +131,39 @@ void DumpShader(std::span<const uint32_t> words, const std::string& name) {
 		return;
 	}
 	file.Write(words.data(), words.size_bytes());
+	if (force) {
+		const auto path_text = Common::PathToString(path);
+		LOGF("GPU diagnostic SPIR-V binary written: %s (%" PRIu64 " bytes)\n",
+		     path_text.c_str(), static_cast<uint64_t>(words.size_bytes()));
+	}
+}
+
+void DumpDiagnosticShaderDisassembly(const std::vector<uint32_t>& words,
+                                     const std::string& name) {
+	spvtools::SpirvTools disassembler(SPV_ENV_VULKAN_1_3);
+	std::string          text;
+	const auto options =
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_NO_HEADER) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_COMMENT) |
+	    static_cast<uint32_t>(SPV_BINARY_TO_TEXT_OPTION_INDENT);
+	if (!disassembler.Disassemble(words, &text, options)) {
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "GPU diagnostic SPIR-V disassembly failed for %s\n", name.c_str());
+		return;
+	}
+	const auto path = Config::GetShaderLogFolder() / name;
+	Common::File::CreateDirectories(path.parent_path());
+	Common::File file(path);
+	if (file.IsInvalid()) {
+		const auto path_text = Common::PathToString(path);
+		LOGF_COLOR(Log::Color::BrightRed, "Can't create file: %s\n", path_text.c_str());
+		return;
+	}
+	file.Write(text.data(), text.size());
+	const auto path_text = Common::PathToString(path);
+	LOGF("GPU diagnostic SPIR-V disassembly written: %s (%" PRIu64 " bytes)\n",
+	     path_text.c_str(), static_cast<uint64_t>(text.size()));
 }
 
 void ValidateShaderSpirv(const char* stage, uint64_t shader_hash,
@@ -237,7 +271,8 @@ std::vector<vk::Format> VertexInputFormats(const ShaderVertexInputInfo&         
 ShaderRecompiler::Spirv::Profile SpirvProfile(const GraphicContext& graphics) {
 	// AMD GPUs (vendor 0x1002) run NMin/NMax as v_min/v_max, which give the guest's NaN and
 	// signed-zero results; GLSL.std.450 alone does not order -0 below +0.
-	return {.maintenance8           = graphics.maintenance8_enabled,
+	return {.fragment_barycentric   = graphics.fragment_shader_barycentric_enabled,
+	        .maintenance8           = graphics.maintenance8_enabled,
 	        .native_float_min_max   = graphics.physical_device_properties.vendorID == 0x1002u,
 	        .device_clock_period_ps = graphics.device_clock_period_ps,
 	        .robust_buffer_access   = graphics.robust_buffer_access_enabled,
@@ -321,7 +356,15 @@ ShaderModule& PipelineCache::CompileModule(Program& program, const ProgramKey& k
 	const auto id = XXH3_64bits(inputs.bytes.data(), inputs.bytes.size());
 
 	const auto* stage = ShaderRecompiler::StageName(key.stage);
-	DumpShader(result.spirv, fmt::format("{}_{:016x}_{:016x}.spv", stage, key.hash, id));
+	const bool diagnostic_shader =
+	    key.hash == 0x4f97479bb358932full || key.hash == 0x94fd11e8abbdc3c8ull ||
+	    (key.stage == ShaderType::Vertex && key.hash == 0x004c650d72ecd57cull);
+	DumpShader(result.spirv, fmt::format("{}_{:016x}_{:016x}.spv", stage, key.hash, id),
+	           diagnostic_shader);
+	if (diagnostic_shader) {
+		DumpDiagnosticShaderDisassembly(
+		    result.spirv, fmt::format("{}_{:016x}_{:016x}.spvasm", stage, key.hash, id));
+	}
 	ValidateShaderSpirv(stage, key.hash, result.spirv, profile.maintenance8);
 	auto& module = program.modules.emplace_back(ShaderModule {
 	    .id             = id,
@@ -349,10 +392,8 @@ ShaderModule& PipelineCache::CompileModule(Program& program, const ProgramKey& k
 	} else if (key.stage == ShaderType::Mesh) {
 		module.mesh_task = options.input_info.vertex->indirect_draw;
 	}
-	// Programs with GPU-selected calls depend on their callees' current code.
-	if (program.call_source == nullptr) {
-		StoreModule(key, program, module, result.spirv);
-	}
+	// Persist callable variants too; their linked function code is stored alongside SPIR-V.
+	StoreModule(key, program, module, result.spirv);
 	return module;
 }
 
@@ -388,11 +429,30 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		runtime.workgroup_counts   = input_info.workgroup_counts;
 		runtime.indirect_args_address = input_info.indirect_args_address;
 	}
-	m_lookup_key.stage           = options.stage;
-	m_lookup_key.hash            = params.hash;
-	m_lookup_key.user_data_count = params.user_data_count;
-	BuildStageStaticKey(input_info, m_lookup_key.static_state);
-	auto entry = m_program_cache.find(m_lookup_key);
+	auto entry = [&] {
+		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+			Common::DebugCounters::ScopedTimer timer(
+			    Common::DebugCounters::Counter::ComputeKeyLookupCalls,
+			    Common::DebugCounters::Counter::ComputeKeyLookupNs);
+			m_lookup_key.stage           = options.stage;
+			m_lookup_key.hash            = params.hash;
+			m_lookup_key.user_data_count = params.user_data_count;
+			BuildStageStaticKey(input_info, m_lookup_key.static_state);
+			options.shader_hash = params.hash;
+			options.user_data   = user_data;
+			options.back_code   = params.back_code;
+			return m_program_cache.find(m_lookup_key);
+		} else {
+			m_lookup_key.stage           = options.stage;
+			m_lookup_key.hash            = params.hash;
+			m_lookup_key.user_data_count = params.user_data_count;
+			BuildStageStaticKey(input_info, m_lookup_key.static_state);
+			options.shader_hash = params.hash;
+			options.user_data   = user_data;
+			options.back_code   = params.back_code;
+			return m_program_cache.find(m_lookup_key);
+		}
+	}();
 	const auto bind = [&](const ShaderModule& module) {
 		input_info.stage = {.module = &module, .resources = &entry->second.resources};
 		module.info.bindings.AdvancePushData(push_data_cursor);
@@ -400,22 +460,91 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 	};
 	bool source_changed = false;
 	if (entry != m_program_cache.end()) {
+		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::ComputeCacheHits);
+		}
 		auto& cached = entry->second;
 		if (cached.skip_dispatch) return nullptr;
 		ShaderModule* module = nullptr;
+		const auto refresh_call_source = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeCallRefreshCalls,
+				    Common::DebugCounters::Counter::ComputeCallRefreshNs);
+				return cached.RefreshCallSource(runtime);
+			} else {
+				return cached.RefreshCallSource(runtime);
+			}
+		};
+		const auto find_module_with_calls = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
+				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
+				return cached.template FindModule<true>(runtime, push_data_cursor);
+			} else {
+				return cached.template FindModule<true>(runtime, push_data_cursor);
+			}
+		};
+		const auto find_module_without_calls = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
+				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
+				return cached.template FindModule<false>(runtime, push_data_cursor);
+			} else {
+				return cached.template FindModule<false>(runtime, push_data_cursor);
+			}
+		};
+		if (cached.uses_calls && cached.call_source == nullptr) {
+			// The store keeps the linked function code with callable shader variants. Rebuild the
+			// guest call-source graph on first use, then match its current linked code to a module.
+			auto restored_source = ShaderRecompiler::PrepareShaderSource(params.code, options);
+			if (restored_source.unsupported_call_pc != UINT32_MAX) {
+				PipelineCacheLog(
+				    "!!! TEMPORARY COMPUTE DISPATCH SKIP !!! shader=0x{:016x} pc=0x{:08x} "
+				    "reason=unsupported GPU-selected callable target; rendering is incomplete",
+				    params.hash, restored_source.unsupported_call_pc);
+				cached.skip_dispatch = true;
+				return nullptr;
+			}
+			if (restored_source.calls.empty()) {
+				// The cache no longer describes this source. Drop its stale modules and compile the
+				// direct shader through the ordinary path below.
+				for (const auto& stale: cached.modules) {
+					m_graphics.device.destroyShaderModule(stale.module, nullptr);
+				}
+				cached.modules.clear();
+				cached.uses_calls = false;
+				source_changed   = true;
+			} else {
+				cached.call_source =
+				    std::make_unique<ShaderRecompiler::ShaderSource>(std::move(restored_source));
+				refresh_call_source();
+				source_changed = true;
+			}
+		}
 		if (cached.call_source) {
-			source_changed = cached.RefreshCallSource(runtime);
-			if (!source_changed) module = cached.FindModule<true>(runtime, push_data_cursor);
-		} else {
-			module = cached.FindModule<false>(runtime, push_data_cursor);
+			if (!source_changed) {
+				source_changed = refresh_call_source();
+				if (!source_changed) module = find_module_with_calls();
+			}
+		} else if (!source_changed) {
+			module = find_module_without_calls();
 		}
 		if (module != nullptr) return bind(*module);
+	} else if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+		Common::DebugCounters::Add(Common::DebugCounters::Counter::ComputeCacheMisses);
 	}
 
-	options.shader_hash     = params.hash;
-	options.user_data       = user_data;
-	options.back_code       = params.back_code;
-	options.dump_ir         = Config::GetShaderLogDirection() != Config::LogDirection::Silent;
+	const bool diagnostic_shader =
+	    params.hash == 0x4f97479bb358932full || params.hash == 0x94fd11e8abbdc3c8ull;
+	options.dump_ir = Config::GetShaderLogDirection() != Config::LogDirection::Silent ||
+	                  diagnostic_shader;
+	if (diagnostic_shader) {
+		LOGF("GPU diagnostic shader IR capture enabled: stage=%s hash=0x%016" PRIx64 "\n",
+		     ShaderRecompiler::StageName(options.stage), params.hash);
+	}
 	options.emit_debug_info = Config::GraphicsDebugDumpEnabled();
 	ShaderRecompiler::ShaderSource source;
 	if (entry == m_program_cache.end()) {
@@ -444,19 +573,21 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		translated = ShaderRecompiler::TranslateProgram(params.code, options);
 	}
 	if (entry == m_program_cache.end()) {
-		auto retained = !source.calls.empty()
+		const bool uses_calls = !source.calls.empty();
+		auto retained = uses_calls
 		                    ? std::make_unique<ShaderRecompiler::ShaderSource>(std::move(source))
 		                    : nullptr;
 		entry = m_program_cache.emplace(m_lookup_key, Program {
 		    .call_source   = std::move(retained),
 		    .resource_plan = ShaderRecompiler::IR::ExtractResourcePlan(translated.program),
+		    .uses_calls    = uses_calls,
 		}).first;
 		auto& program = entry->second;
 		EXIT_IF(!ShaderRecompiler::IR::MaterializeResources(
 		    program.resource_plan, runtime, program.resources, program.specialization));
 	} else if (source_changed) {
 		entry->second.resource_plan = ShaderRecompiler::IR::ExtractResourcePlan(translated.program);
-		if (const auto* module = entry->second.FindModule<true>(runtime, push_data_cursor)) {
+		if (const auto* module = entry->second.template FindModule<true>(runtime, push_data_cursor)) {
 			return bind(*module);
 		}
 	}
@@ -583,6 +714,18 @@ void PipelineCache::CheckpointDriverCache() {
 
 void PipelineCache::Save() {
 	m_store.Finish();
+	if (m_session_stored_modules != 0 || m_session_stored_graphics_pipelines != 0 ||
+	    m_session_stored_tessellation_layouts != 0) {
+		PipelineCacheLog(
+		    "Game precompiler: learned this session {} shader modules (including callable variants), "
+		    "{} graphics pipeline states and {} tessellation layouts; these records will be "
+		    "precompiled on the next compatible launch",
+		    m_session_stored_modules, m_session_stored_graphics_pipelines,
+		    m_session_stored_tessellation_layouts);
+		m_session_stored_modules = 0;
+		m_session_stored_graphics_pipelines = 0;
+		m_session_stored_tessellation_layouts = 0;
+	}
 	if (m_driver_cache_dirty) {
 		m_driver_cache_dirty = false;
 		WriteDriverCache();
@@ -872,7 +1015,12 @@ void PipelineCache::GetGraphicsPrograms(const CommandBuffer& command, DrawRender
 const ShaderModule* PipelineCache::GetComputeProgram(const HW::ComputeShaderInfo& regs,
                                                      ShaderComputeInputInfo&      input_info) {
 	input_info.host_subgroup_size = m_graphics.SupportsComputeWave64() ? 64u : 32u;
-	const auto        params      = PrepareProgram(regs, input_info);
+	const auto params = [&] {
+		Common::DebugCounters::ScopedTimer timer(
+		    Common::DebugCounters::Counter::ComputeParamsCalls,
+		    Common::DebugCounters::Counter::ComputeParamsNs);
+		return PrepareProgram(regs, input_info);
+	}();
 	input_info.lds_storage = input_info.lds_size_dwords * 4u >
 	    m_graphics.GetPhysicalDeviceProperties().limits.maxComputeSharedMemorySize;
 	uint32_t          push_data_cursor = 0;

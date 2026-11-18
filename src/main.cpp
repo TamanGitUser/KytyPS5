@@ -59,12 +59,19 @@ static void PrintUsage() {
 	::printf("  --vblank-frequency <num>             Virtual vblank frequency. Default: 60.\n");
 	::printf("  --console-language <0-29>            Console language. Default: 1 (English US).\n");
 	::printf("  --vulkan-validation                  Enable Vulkan validation.\n");
+	::printf("  --no-nvidia-gpu-diagnostics          Disable optional NVIDIA GPU crash diagnostics.\n");
 	::printf("  --network-connected                  Use the host local network.\n");
 	::printf("  --emulate-psn                        Simulate PSN sign-in for compatibility.\n");
 	::printf("  --gpu-assisted-validation            Bounds-check shader accesses on the GPU.\n"
 	         "                                       Implies --vulkan-validation; very slow.\n");
 	::printf("  --shader-validation                  Enable shader validation.\n");
 	::printf("  --shader-cache                       Keep compiled shaders and pipelines between boots.\n");
+	::printf("  --fsr1                               Enable AMD FSR 1 EASU for eligible SDR upscaling.\n");
+	::printf("  --fsr1-sharpness <0..100>            AMD FSR 1 RCAS sharpening strength (default: 50).\n");
+	::printf("  --demons-souls-render-height <720..2160>  16:9 3D render height; keeps 4K output (PPSA01341 01.007.000).\n");
+	::printf("  --demons-souls-texture-reduce-levels <0..2>  Omit 0-2 largest BC texture mips (PPSA01341 01.007.000).\\n");
+	::printf("  --anisotropy-override <value>        0=game, 1=off, 2/4/8/16=force.\n");
+	::printf("  --texture-mip-bias-quarter <-8..8>   Sampling mip bias in 0.25 mip steps.\n");
 	::printf("  --tessellation                      Draw tessellation patches; skipped by default.\n");
 	::printf("  --occlusion-queries                  Count occlusion query samples on the GPU.\n");
 	::printf("  --relaxed-shader-float               Native GPU float ops in shaders; faster, can be inaccurate.\n");
@@ -194,9 +201,11 @@ static constexpr Flag FLAGS[] = {
     {"--network-connected", &ConfigOptions::network_connected},
     {"--emulate-psn", &ConfigOptions::psn_emulation_enabled},
     {"--vulkan-validation", &ConfigOptions::vulkan_validation_enabled},
+    {"--no-nvidia-gpu-diagnostics", &ConfigOptions::nvidia_gpu_diagnostics_enabled, false},
     {"--gpu-assisted-validation", &ConfigOptions::gpu_assisted_validation_enabled},
     {"--shader-validation", &ConfigOptions::shader_validation_enabled},
     {"--shader-cache", &ConfigOptions::shader_cache_enabled},
+    {"--fsr1", &ConfigOptions::fsr1_enabled},
     {"--tessellation", &ConfigOptions::tessellation_enabled},
     {"--occlusion-queries", &ConfigOptions::occlusion_queries_enabled},
     {"--relaxed-shader-float", &ConfigOptions::relaxed_shader_float},
@@ -366,8 +375,29 @@ static bool ParseArgs(int argc, char* argv[], RunOptions& options, bool& show_he
 				return false;
 			}
 		} else if (arg == "--gpu") {
-			if (!ParseInt32(value, options.config.gpu_index)) {
-				::printf("invalid gpu index: %s\n", value.c_str());
+			if (!ParseInt32(value, options.config.gpu_index)) { ::printf("invalid gpu index: %s\n", value.c_str()); return false; }
+		} else if (arg == "--anisotropy-override") {
+			if (!ParseUint32(value, options.config.anisotropy_override) || (options.config.anisotropy_override != 0 && options.config.anisotropy_override != 1 && options.config.anisotropy_override != 2 && options.config.anisotropy_override != 4 && options.config.anisotropy_override != 8 && options.config.anisotropy_override != 16)) { ::printf("invalid anisotropy override: %s\n", value.c_str()); return false; }
+		} else if (arg == "--texture-mip-bias-quarter") {
+			if (!ParseInt32(value, options.config.texture_mip_bias_quarters) || options.config.texture_mip_bias_quarters < -8 || options.config.texture_mip_bias_quarters > 8) { ::printf("invalid texture mip bias: %s\n", value.c_str()); return false; }
+		} else if (arg == "--fsr1-sharpness") {
+			if (!ParseUint32(value, options.config.fsr1_sharpness) ||
+			    options.config.fsr1_sharpness > 100) {
+				::printf("invalid FSR 1 sharpness: %s\n", value.c_str());
+				return false;
+			}
+		} else if (arg == "--demons-souls-render-height") {
+			if (!ParseUint32(value, options.config.demons_souls_render_height) ||
+			    (options.config.demons_souls_render_height != 0 &&
+			     (options.config.demons_souls_render_height < 720 ||
+			      options.config.demons_souls_render_height > 2160))) {
+				::printf("invalid Demon's Souls render height: %s\n", value.c_str());
+				return false;
+			}
+		} else if (arg == "--demons-souls-texture-reduce-levels") {
+			if (!ParseUint32(value, options.config.demons_souls_texture_reduce_levels) ||
+			    options.config.demons_souls_texture_reduce_levels > 2) {
+				::printf("invalid Demon's Souls texture reduction level: %s\\n", value.c_str());
 				return false;
 			}
 		} else if (arg == "--vblank-frequency") {

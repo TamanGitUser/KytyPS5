@@ -1,3 +1,4 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-08. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/pipeline/descriptors.h"
 
 #include "common/alignment.h"
@@ -28,6 +29,7 @@
 #include "graphics/shader/recompiler/ir/passes/ResourceMaterialization.h"
 #include "graphics/shader/shader.h"
 #include "kernel/memory.h"
+#include "loader/demonsSoulsTextureMips.h"
 
 #include <algorithm>
 #include <atomic>
@@ -174,7 +176,7 @@ bool IsSupportedDepthTextureEncoding(const ShaderTextureResource& descriptor, bo
 		return false;
 	}
 	// META_PIPE_ALIGNED only affects metadata addressing, which a clear COMPRESSION_EN disables.
-	const auto         metadata_control = descriptor.fields[6] & 0x00ffffffu;
+	const auto         metadata_control = descriptor.fields[6] & 0x00ffff00u;
 	constexpr uint32_t pipe_aligned     = 1u << 19u;
 	if ((metadata_control & ~pipe_aligned) == 0) {
 		return true;
@@ -479,6 +481,106 @@ static bool ResolveTextureMipView(ImageInfo& info, uint32_t physical_levels, boo
 	return false;
 }
 
+
+static bool TextureFromLevel(const ImageInfo& full, uint32_t first, ImageInfo& out) {
+	if (first == 0 || first >= full.resources.levels ||
+	    full.resources.levels > full.mip_layout.size() || full.resources.layers != 1 ||
+	    full.IsVolume() || full.samples != 1 || !full.IsBlock() || !full.IsTiled() ||
+	    full.HasMetadata() || full.HasStencil() || full.IsDepth() ||
+	    full.type != Prospero::ImageType::kColor2D) {
+		return false;
+	}
+
+	const auto shift = [&](uint32_t value) {
+		return std::max((value + (1u << first) - 1u) >> first, 1u);
+	};
+	out                  = full;
+	out.extent.width     = shift(full.extent.width);
+	out.extent.height    = shift(full.extent.height);
+	out.extent.depth     = 1;
+	out.resources.levels = full.resources.levels - first;
+	out.pitch            = TileGetTexturePitch(full.guest_format, out.extent.width, full.tile_mode);
+	if (out.pitch == 0 || out.resources.levels == 0 || out.resources.levels > out.mip_layout.size()) {
+		return false;
+	}
+
+	TileSurfaceLayout probe {};
+	const TileSurfaceDescription description {
+	    full.guest_format, full.tile_mode, TileSurfaceDimension::Dim2D,
+	    out.extent.width, out.extent.height, 1, out.resources.levels, 1};
+	if (!TileGetTiledTextureLayout(description, probe)) {
+		return false;
+	}
+
+	// Ask ImageInfo to rebuild the host-visible mip chain from the first retained guest mip.
+	// The guest base address stays fixed because the game stores smaller mip levels first.
+	out.data.size = 0;
+	out.UpdateSize();
+	if (out.data.address != full.data.address || out.data.size == 0 ||
+	    out.data.size >= full.data.size) {
+		return false;
+	}
+	const auto same_guest_mip = [](const ImageMipInfo& left, const ImageMipInfo& right) {
+		return left.offset == right.offset && left.size == right.size &&
+		       left.pitch == right.pitch && left.height == right.height &&
+		       left.tail_x == right.tail_x && left.tail_y == right.tail_y &&
+		       left.surface_z == right.surface_z;
+	};
+	for (uint32_t level = 0; level < out.resources.levels; ++level) {
+		if (!same_guest_mip(out.mip_layout[level], full.mip_layout[first + level])) {
+			return false;
+		}
+	}
+	const auto alignment = out.DataAlignment();
+	return alignment != 0 && (out.data.address & (static_cast<uint64_t>(alignment) - 1u)) == 0;
+}
+
+static void HoldFromBaseLevel(TextureCache& cache, TextureCache::ImageDesc& desc) {
+	const uint32_t reduce = Loader::DemonsSoulsTextureMips::ReduceLevels();
+	const auto&    full   = desc.info;
+	if (reduce == 0 || desc.type != TextureCache::BindingType::Texture || desc.heap ||
+	    desc.view_info.type != vk::ImageViewType::e2D || desc.view_info.layer_count != 1 ||
+	    desc.view_info.base_layer != 0 || desc.view_info.min_lod != 0 ||
+	    full.resources.layers != 1 || full.resources.levels <= reduce ||
+	    full.samples != 1 || !full.IsBlock() || !full.IsTiled() ||
+	    full.IsVolume() || full.IsDepth() || full.HasMetadata() || full.HasStencil() ||
+	    full.type != Prospero::ImageType::kColor2D ||
+	    full.tile_mode == Prospero::TileMode::kLinear ||
+	    full.tile_mode == Prospero::TileMode::kDepth ||
+	    full.tile_mode == Prospero::TileMode::kRenderTarget ||
+	    std::max(full.extent.width, full.extent.height) < 1024u ||
+	    desc.view_info.level_count == 0) {
+		return;
+	}
+	const uint32_t base = desc.view_info.base_level;
+	if (base > full.resources.levels - 1u ||
+	    desc.view_info.level_count > full.resources.levels - base) {
+		return;
+	}
+	const uint32_t last = base + desc.view_info.level_count - 1u;
+	if (last < reduce || cache.HoldsImage(full)) {
+		return;
+	}
+	const uint32_t first_held = std::max(base, reduce);
+
+	ImageInfo from {};
+	// A prior view may already have caused a texture from an earlier level to be held.
+	for (uint32_t first = std::max(reduce, 1u); first < first_held; ++first) {
+		if (TextureFromLevel(full, first, from) && cache.HoldsImage(from)) {
+			desc.info                  = from;
+			desc.view_info.base_level  = first_held - first;
+			desc.view_info.level_count = last - first_held + 1u;
+			return;
+		}
+	}
+	if (!TextureFromLevel(full, first_held, from) || !cache.CanReduceMipRange(full, from)) {
+		return;
+	}
+	desc.info                  = std::move(from);
+	desc.view_info.base_level  = 0;
+	desc.view_info.level_count = last - first_held + 1u;
+}
+
 TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   resource,
                                               const ShaderRecompiler::IR::DescriptorValue& value) {
 	if (resource.atomic64 && !m_context.GetGraphics().shader_image_int64_atomics_enabled) {
@@ -581,7 +683,8 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	}
 	const auto view_format =
 	    storage ? StorageViewFormat(resource, format, pixel_format) : pixel_format;
-	const auto              block_bytes = Prospero::BlockCompressedBytesPerBlock(format);
+	const auto block_bytes   = Prospero::BlockCompressedBytesPerBlock(format);
+	const bool meta_compress = block_bytes == 0 && !resource.r128 && descriptor.MetaCompress();
 	TextureCache::ImageDesc desc {};
 	desc.info.data         = {address, 0};
 	desc.info.pixel_format = pixel_format;
@@ -593,12 +696,12 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	    block_bytes != 0 ? block_bytes : Prospero::NumBytesPerElement(format);
 	desc.info.samples   = samples;
 	desc.info.tile_mode = tile;
-	if (!resource.r128 && descriptor.MetaCompress() && tile != Prospero::TileMode::kDepth) {
+	if (meta_compress && tile != Prospero::TileMode::kDepth) {
 		desc.info.metadata.kind = ImageMetadataKind::Dcc;
 	}
 	if (levels > physical_levels) {
 		if (!ResolveTextureMipView(desc.info, physical_levels,
-		                           !resource.r128 && descriptor.MetaCompress(), view_levels,
+		                           meta_compress, view_levels,
 		                           view_base)) {
 			EXIT("unsupported texture mip view changes physical layout: base=%u last=%u max=%u "
 			     "extent=%ux%ux%u tile=%u\n",
@@ -618,7 +721,7 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	if (storage) {
 		ValidateStorageTexture(resource, descriptor, desc.info.data.size);
 	}
-	if (!resource.r128 && descriptor.MetaCompress() && tile != Prospero::TileMode::kDepth) {
+	if (meta_compress && tile != Prospero::TileMode::kDepth) {
 		TileSizeAlign metadata_size {};
 		(void)TileGetDccSize(width, height, volume ? depth : image_layers,
 		                     desc.info.bytes_per_block, physical_levels, tile, metadata_size,
@@ -631,6 +734,9 @@ TextureBinding RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageR
 	desc.view_info.base_level = view_base;
 	desc.type = storage ? TextureCache::BindingType::Storage : TextureCache::BindingType::Texture;
 	desc.heap = resource.heap;
+	if (!storage) {
+		HoldFromBaseLevel(texture_cache, desc);
+	}
 
 	auto id = texture_cache.FindImage(desc, shader_conversion);
 	if (!id) {
@@ -967,6 +1073,35 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 			const ImageSubresourceRange range {view.base_level, view.level_count, view.base_layer,
 			                                   view.layer_count};
 			const bool storage = binding.desc.type == TextureCache::BindingType::Storage;
+			const bool gpu_diagnostic_shader =
+			    program.shader_hash == 0x4f97479bb358932full ||
+			    program.shader_hash == 0x94fd11e8abbdc3c8ull;
+			const auto old_layout = image.backing.state.layout;
+			const auto old_access = image.backing.state.access_mask;
+			const auto old_stage  = image.backing.state.pl_stage;
+			const char* transition_path =
+			    image.binding.is_target ? "render-target"
+			    : image.binding.force_general && !image.info.IsDepth() ? "force-general"
+			    : storage ? "storage-general"
+			              : "sampled-read-layout";
+			if (gpu_diagnostic_shader) {
+				const auto& metadata = program.info.images[i];
+				LOGF("GPU diagnostic image-binding begin: shader=0x%016" PRIx64
+				     " index=%u class=%u read=%s written=%s atomic=%s "
+				     "guest_addr=0x%010" PRIx64 " guest_size=0x%016" PRIx64
+				     " extent=%ux%u format=%s view_format=%s binding_type=%u "
+				     "image_id=%u image_serial=%" PRIu64 " path=%s "
+				     "old_layout=%s old_stage=0x%016" PRIx64 " old_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, static_cast<uint32_t>(metadata.resource_class),
+				     metadata.read ? "true" : "false", metadata.written ? "true" : "false",
+				     metadata.atomic ? "true" : "false", image.info.data.address,
+				     image.info.data.size, image.info.extent.width, image.info.extent.height,
+				     vk::to_string(image.info.pixel_format).c_str(),
+				     vk::to_string(binding.desc.view_info.format).c_str(),
+				     static_cast<uint32_t>(binding.desc.type), binding.image_id.index, image.serial,
+				     transition_path, vk::to_string(old_layout).c_str(),
+				     static_cast<uint64_t>(old_stage), static_cast<uint64_t>(old_access));
+			}
 			if (image.binding.is_target) {
 				const auto layout = image.binding.attachment_layout;
 				EXIT_IF(layout == vk::ImageLayout::eUndefined);
@@ -998,6 +1133,16 @@ void RenderExecutor::CommitBindings(CommandBuffer&                     buffer,
 				image.Transit(image.ReadLayout(), vk::AccessFlagBits2::eShaderRead, range, vk_buffer);
 			}
 			binding.layout = image.backing.state.layout;
+			if (gpu_diagnostic_shader) {
+				LOGF("GPU diagnostic image-binding end: shader=0x%016" PRIx64
+				     " index=%u image_id=%u image_serial=%" PRIu64
+				     " new_layout=%s new_stage=0x%016" PRIx64
+				     " new_access=0x%016" PRIx64 "\n",
+				     program.shader_hash, i, binding.image_id.index, image.serial,
+				     vk::to_string(image.backing.state.layout).c_str(),
+				     static_cast<uint64_t>(image.backing.state.pl_stage),
+				     static_cast<uint64_t>(image.backing.state.access_mask));
+			}
 		}
 
 		std::array<size_t, ShaderRecompiler::IR::ImageBindingCount> image_starts {};

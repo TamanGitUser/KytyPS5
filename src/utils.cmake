@@ -81,7 +81,8 @@ if(KYTY_CLANG_CL)
 	string(REGEX REPLACE "/MD" "/MT" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
 	string(REGEX REPLACE "/MD" "/MT" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
 			
-	set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} /utf-8 /Oy- /clang:-march=x86-64-v3 /clang:-ffp-contract=off /wd4244 /wd4305 /wd4800 /wd4345")
+	# Embed CodeView records in object files so the emulator PDB contains private function and line information.
+	set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} /Z7 /utf-8 /Oy- /clang:-march=x86-64-v3 /clang:-ffp-contract=off /wd4244 /wd4305 /wd4800 /wd4345")
   
 	if(KYTY_WARNINGS_ARE_ERRORS)
 		#set(KYTY_CPP_FLAGS "${KYTY_CPP_FLAGS} /WX")

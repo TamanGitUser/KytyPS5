@@ -5,6 +5,7 @@
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/image/image.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 #include "graphics/host_gpu/renderer/render.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/shader/shaderBindings.h"
@@ -168,8 +169,15 @@ void RenderExecutor::ProcessPssr(CommandBuffer& buffer, const Pssr::Request& req
 	command.bindPipeline(vk::PipelineBindPoint::eCompute, m_pssr_pipeline);
 	command.pushConstants(m_pssr_pipeline_layout, vk::ShaderStageFlagBits::eCompute,
 	                      0, sizeof(parameters), &parameters);
-	command.dispatch((parameters.output_size[0] + 7) / 8,
-	                 (parameters.output_size[1] + 7) / 8, 1);
+	const auto dispatch_x = (parameters.output_size[0] + 7) / 8;
+	const auto dispatch_y = (parameters.output_size[1] + 7) / 8;
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), command,
+	                        DiagnosticCheckpointKind::PssrDispatchBegin, 0, 0,
+	                        dispatch_x, dispatch_y, 1);
+	command.dispatch(dispatch_x, dispatch_y, 1);
+	SetDiagnosticCheckpoint(buffer.GetGraphics(), command,
+	                        DiagnosticCheckpointKind::PssrDispatchEnd, 0, 0,
+	                        dispatch_x, dispatch_y, 1);
 	ShaderAccessBarrier(command, vk::PipelineStageFlagBits::eComputeShader);
 	ResetBindings();
 }

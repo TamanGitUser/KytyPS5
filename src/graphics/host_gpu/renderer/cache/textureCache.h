@@ -73,6 +73,9 @@ public:
 	// returns false for any other copy.
 	[[nodiscard]] bool CopyToImage(uint64_t address, uint64_t source, uint64_t size);
 	[[nodiscard]] bool IsRegionRegistered(uint64_t address, uint64_t size);
+	// Mip reduction is allowed only when the source range has no dirty bytes or tracked image overlap.
+	[[nodiscard]] bool HoldsImage(const ImageInfo& info);
+	[[nodiscard]] bool CanReduceMipRange(const ImageInfo& full, const ImageInfo& reduced);
 
 	[[nodiscard]] bool IsMeta(uint64_t address);
 	[[nodiscard]] bool IsMetaCleared(uint64_t address, uint32_t slice);

@@ -39,6 +39,13 @@ QVariantMap Configuration::GameSettings() const {
 	KYTY_CFG_SET(occlusion_queries_enabled);
 	KYTY_CFG_SET(relaxed_shader_float);
 	KYTY_CFG_SET(shader_cache_enabled);
+	KYTY_CFG_SET(nvidia_gpu_diagnostics_enabled);
+	KYTY_CFG_SET(fsr1_enabled);
+	KYTY_CFG_SET(fsr1_sharpness);
+	KYTY_CFG_SET(anisotropy_override);
+	KYTY_CFG_SET(texture_mip_bias_quarters);
+	KYTY_CFG_SET(demons_souls_render_preset);
+	KYTY_CFG_SET(demons_souls_texture_reduce_levels);
 	KYTY_CFG_SET(trophy_enabled);
 	KYTY_CFG_SET(trophy_duration_seconds);
 	KYTY_CFG_SET(perf_overlay_enabled);
@@ -97,6 +104,26 @@ void Configuration::ReadGameSettingsValues(const Settings& s) {
 	KYTY_CFG_GET(occlusion_queries_enabled);
 	KYTY_CFG_GET(relaxed_shader_float);
 	shader_cache_enabled = s.value("shader_cache_enabled", shader_cache_enabled).toBool();
+	nvidia_gpu_diagnostics_enabled =
+	    s.value("nvidia_gpu_diagnostics_enabled", nvidia_gpu_diagnostics_enabled).toBool();
+	KYTY_CFG_GET(fsr1_enabled);
+	fsr1_sharpness = s.value("fsr1_sharpness", fsr1_sharpness).toInt();
+	if (fsr1_sharpness < 0 || fsr1_sharpness > 100) fsr1_sharpness = 50;
+	anisotropy_override = s.value("anisotropy_override", anisotropy_override).toInt();
+	texture_mip_bias_quarters = s.value("texture_mip_bias_quarters", texture_mip_bias_quarters).toInt();
+	if (anisotropy_override != 0 && anisotropy_override != 1 && anisotropy_override != 2 &&
+	    anisotropy_override != 4 && anisotropy_override != 8 && anisotropy_override != 16) {
+		anisotropy_override = 0;
+	}
+	texture_mip_bias_quarters = qBound(-8, texture_mip_bias_quarters, 8);
+	demons_souls_render_preset = s.value("demons_souls_render_preset", 0).toInt();
+	if (demons_souls_render_preset < 0 || demons_souls_render_preset > 4) {
+		demons_souls_render_preset = 0;
+	}
+	demons_souls_texture_reduce_levels = s.value("demons_souls_texture_reduce_levels", 0).toInt();
+	if (demons_souls_texture_reduce_levels < 0 || demons_souls_texture_reduce_levels > 2) {
+		demons_souls_texture_reduce_levels = 0;
+	}
 	trophy_enabled       = s.value("trophy_enabled", trophy_enabled).toBool();
 	KYTY_CFG_GET(trophy_duration_seconds);
 	KYTY_CFG_GET(perf_overlay_enabled);
@@ -180,6 +207,22 @@ bool Configuration::SetGameSettings(const QJsonObject& settings, QString& error)
 	}
 	if (gpu_index < -1) {
 		return fail(tr("GPU index must be -1 or greater."));
+	}
+	if (anisotropy_override != 0 && anisotropy_override != 1 && anisotropy_override != 2 &&
+	    anisotropy_override != 4 && anisotropy_override != 8 && anisotropy_override != 16) {
+		return fail(tr("Anisotropy override must be Game default, Off, 2x, 4x, 8x or 16x."));
+	}
+	if (texture_mip_bias_quarters < -8 || texture_mip_bias_quarters > 8) {
+		return fail(tr("Texture mip bias must be between -2.00 and +2.00."));
+	}
+	if (fsr1_sharpness < 0 || fsr1_sharpness > 100) {
+		return fail(tr("FSR 1 sharpening must be between 0 and 100."));
+	}
+	if (demons_souls_render_preset < 0 || demons_souls_render_preset > 4) {
+		return fail(tr("Demon's Souls render profile must be Auto, Ultra Quality, Quality, Balanced or Performance."));
+	}
+	if (demons_souls_texture_reduce_levels < 0 || demons_souls_texture_reduce_levels > 2) {
+		return fail(tr("Demon's Souls texture VRAM reduction must be Off, 1 or 2 mip levels."));
 	}
 	if (vblank_frequency < 30 || vblank_frequency > 360) {
 		return fail(tr("Vblank frequency must be between 30 and 360."));

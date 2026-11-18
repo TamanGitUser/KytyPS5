@@ -9,6 +9,9 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QStandardItemModel>
+#include <QSignalBlocker>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
@@ -156,6 +159,22 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 	connect(m_ui->slider_controller_volume, &QSlider::valueChanged, this, [this](int value) {
 		m_ui->label_controller_volume_value->setText(tr("%1%").arg(value));
 	});
+	connect(m_ui->comboBox_upscaler, &QComboBox::currentIndexChanged, this, [this](int index) {
+		auto* render_preset = m_ui->comboBox_demons_souls_render_preset;
+		if (index != 1 && render_preset->currentData().toInt() != 0) {
+			const QSignalBlocker block(render_preset);
+			render_preset->setCurrentIndex(0);
+		}
+		const bool enabled = index == 1;
+		m_ui->label_fsr1_sharpness->setEnabled(enabled);
+		m_ui->spinBox_fsr1_sharpness->setEnabled(enabled);
+	});
+	connect(m_ui->comboBox_demons_souls_render_preset, &QComboBox::currentIndexChanged,
+	        this, [this](int index) {
+		        if (index > 0 && m_ui->comboBox_upscaler->currentData().toInt() != 1) {
+			        m_ui->comboBox_upscaler->setCurrentIndex(1);
+		        }
+	        });
 	connect(m_ui->comboBox_shader_log_direction, &QComboBox::currentTextChanged, this,
 	        [this](const QString& text) {
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
@@ -169,6 +188,39 @@ ConfigurationEditDialog::ConfigurationEditDialog(Configuration& info, QWidget* p
 		        auto log = TextToEnum<Configuration::LogDirection>(text);
 		        m_ui->lineEdit_printf_file->setEnabled(log == Configuration::LogDirection::File);
 	        });
+	connect(m_ui->comboBox_texture_quality, &QComboBox::currentIndexChanged, this,
+	        [this](int index) {
+		        // Texture profiles pair progressively coarser mip selection with lower
+		        // anisotropic-filtering cost. The Custom entry leaves both controls alone.
+		        static constexpr int mip_bias_quarters[] = {0, 2, 4, 8};
+		        static constexpr int anisotropy_values[] = {0, 0, 1, 1}; // 0=game, 1=off
+		        if (index < 0 || index >= 4) return;
+		        const QSignalBlocker block_bias(m_ui->doubleSpinBox_texture_mip_bias);
+		        const QSignalBlocker block_anisotropy(m_ui->comboBox_anisotropy_override);
+		        m_ui->doubleSpinBox_texture_mip_bias->setValue(mip_bias_quarters[index] / 4.0);
+		        m_ui->comboBox_anisotropy_override->setCurrentIndex(
+		            m_ui->comboBox_anisotropy_override->findData(anisotropy_values[index]));
+	        });
+	const auto select_matching_texture_profile = [this]() {
+		auto* quality = m_ui->comboBox_texture_quality;
+		const double bias = m_ui->doubleSpinBox_texture_mip_bias->value();
+		const int quarter_steps = qRound(bias * 4.0);
+		const bool exact_quarter_step = qAbs(bias - quarter_steps / 4.0) < 0.001;
+		const int anisotropy = m_ui->comboBox_anisotropy_override->currentData().toInt();
+		int preset = 4; // Custom
+		if (exact_quarter_step) {
+			if (quarter_steps == 0 && anisotropy == 0) preset = 0;
+			else if (quarter_steps == 2 && anisotropy == 0) preset = 1;
+			else if (quarter_steps == 4 && anisotropy == 1) preset = 2;
+			else if (quarter_steps == 8 && anisotropy == 1) preset = 3;
+		}
+		quality->setCurrentIndex(preset);
+	};
+	connect(m_ui->doubleSpinBox_texture_mip_bias,
+	        QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+	        [select_matching_texture_profile](double) { select_matching_texture_profile(); });
+	connect(m_ui->comboBox_anisotropy_override, &QComboBox::currentIndexChanged, this,
+	        [select_matching_texture_profile](int) { select_matching_texture_profile(); });
 
 	setSizeGripEnabled(true);
 
@@ -298,6 +350,60 @@ void ConfigurationEditDialog::Init(const Configuration& info) {
 	m_ui->checkBox_occlusion_queries->setChecked(info.occlusion_queries_enabled);
 	m_ui->checkBox_relaxed_shader_float->setChecked(info.relaxed_shader_float);
 	m_ui->checkBox_shader_cache->setChecked(info.shader_cache_enabled);
+	m_ui->checkBox_nvidia_gpu_diagnostics->setChecked(info.nvidia_gpu_diagnostics_enabled);
+	auto* upscaler = m_ui->comboBox_upscaler;
+	for (int index = 0; index < upscaler->count(); index++) upscaler->setItemData(index, index);
+	if (auto* model = qobject_cast<QStandardItemModel*>(upscaler->model())) {
+		for (int index: {2, 3}) {
+			if (auto* item = model->item(index)) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+		}
+	}
+	upscaler->setCurrentIndex(info.fsr1_enabled ? 1 : 0);
+	m_ui->label_fsr1_sharpness->setEnabled(info.fsr1_enabled);
+	m_ui->spinBox_fsr1_sharpness->setEnabled(info.fsr1_enabled);
+	m_ui->spinBox_fsr1_sharpness->setValue(info.fsr1_sharpness);
+	auto* render_preset = m_ui->comboBox_demons_souls_render_preset;
+	for (int index = 0; index < render_preset->count(); index++)
+		render_preset->setItemData(index, index);
+	const bool supports_demons_souls_render_profiles =
+	    info.title_id.compare(QStringLiteral("PPSA01341"), Qt::CaseInsensitive) == 0 &&
+	    info.gameVersion == QStringLiteral("01.007.000") &&
+	    QFileInfo(info.basedir).isDir() &&
+	    QFileInfo(QDir(info.basedir).filePath(info.elf)).isFile() &&
+	    QFileInfo(info.elf).fileName().compare(QStringLiteral("eboot.bin"), Qt::CaseInsensitive) == 0;
+	render_preset->setEnabled(supports_demons_souls_render_profiles);
+	render_preset->setCurrentIndex(
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0);
+	auto* texture_reduce = m_ui->comboBox_demons_souls_texture_reduce_levels;
+	for (int index = 0; index < texture_reduce->count(); index++)
+		texture_reduce->setItemData(index, index);
+	m_ui->label_demons_souls_texture_reduce_levels->setEnabled(supports_demons_souls_render_profiles);
+	texture_reduce->setEnabled(supports_demons_souls_render_profiles);
+	texture_reduce->setCurrentIndex(
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_texture_reduce_levels, 2) : 0);
+	const bool fsr1_active = upscaler->currentData().toInt() == 1;
+	m_ui->label_fsr1_sharpness->setEnabled(fsr1_active);
+	m_ui->spinBox_fsr1_sharpness->setEnabled(fsr1_active);
+	auto* anisotropy = m_ui->comboBox_anisotropy_override;
+	const QList<int> anisotropy_values {0, 1, 2, 4, 8, 16};
+	for (int index = 0; index < anisotropy_values.size(); index++)
+		anisotropy->setItemData(index, anisotropy_values[index]);
+	anisotropy->setCurrentIndex(qMax(0, anisotropy->findData(info.anisotropy_override)));
+	auto* texture_quality = m_ui->comboBox_texture_quality;
+	const QList<int> texture_quality_biases {0, 2, 4, 8, -1};
+	for (int index = 0; index < texture_quality_biases.size(); index++)
+		texture_quality->setItemData(index, texture_quality_biases[index]);
+	m_ui->doubleSpinBox_texture_mip_bias->setValue(info.texture_mip_bias_quarters / 4.0);
+	int texture_quality_index = 4; // Custom
+	if (info.texture_mip_bias_quarters == 0 && info.anisotropy_override == 0)
+		texture_quality_index = 0;
+	else if (info.texture_mip_bias_quarters == 2 && info.anisotropy_override == 0)
+		texture_quality_index = 1;
+	else if (info.texture_mip_bias_quarters == 4 && info.anisotropy_override == 1)
+		texture_quality_index = 2;
+	else if (info.texture_mip_bias_quarters == 8 && info.anisotropy_override == 1)
+		texture_quality_index = 3;
+	texture_quality->setCurrentIndex(texture_quality_index);
 	m_ui->checkBox_skip_notice_screen->setChecked(info.skip_notice_screen);
 	m_ui->checkBox_network_connected->setChecked(info.network_connected);
 	m_ui->checkBox_psn_emulation->setChecked(info.psn_emulation_enabled);
@@ -537,6 +643,13 @@ static void UpdateInfo(Configuration& info, Ui::ConfigurationEditDialog& ui, boo
 	info.occlusion_queries_enabled = ui.checkBox_occlusion_queries->isChecked();
 	info.relaxed_shader_float      = ui.checkBox_relaxed_shader_float->isChecked();
 	info.shader_cache_enabled      = ui.checkBox_shader_cache->isChecked();
+	info.nvidia_gpu_diagnostics_enabled = ui.checkBox_nvidia_gpu_diagnostics->isChecked();
+	info.fsr1_enabled = ui.comboBox_upscaler->currentData().toInt() == 1;
+	info.fsr1_sharpness = ui.spinBox_fsr1_sharpness->value();
+	info.demons_souls_render_preset = ui.comboBox_demons_souls_render_preset->currentData().toInt();
+	info.demons_souls_texture_reduce_levels = ui.comboBox_demons_souls_texture_reduce_levels->currentData().toInt();
+	info.anisotropy_override = ui.comboBox_anisotropy_override->currentData().toInt();
+	info.texture_mip_bias_quarters = qRound(ui.doubleSpinBox_texture_mip_bias->value() * 4.0);
 	info.skip_notice_screen        = ui.checkBox_skip_notice_screen->isChecked();
 	info.network_connected         = ui.checkBox_network_connected->isChecked();
 	info.psn_emulation_enabled     = ui.checkBox_psn_emulation->isChecked();

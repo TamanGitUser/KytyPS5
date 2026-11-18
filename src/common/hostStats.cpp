@@ -11,6 +11,7 @@
 #include <windows.h> // IWYU pragma: keep
 // clang-format off
 #include <psapi.h>
+#include <tlhelp32.h> // IWYU pragma: keep
 // clang-format on
 #elif defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
@@ -58,6 +59,70 @@ uint64_t FileTimeTo100Ns(const FILETIME& time) {
 	return (static_cast<uint64_t>(time.dwHighDateTime) << 32u) | time.dwLowDateTime;
 }
 
+// Sample per-thread CPU time off the render/present path. The overlay sampler calls this once
+// per second, allowing the Windows performance panel to identify the busiest emulator workers.
+void SampleWindowsThreads(HostStats& stats, Counters& now) {
+	using GetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+	static const auto get_thread_description = reinterpret_cast<GetThreadDescriptionFn>(
+	    GetProcAddress(GetModuleHandleW(L"Kernel32.dll"), "GetThreadDescription"));
+
+	const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	if (snapshot == INVALID_HANDLE_VALUE) {
+		return;
+	}
+
+	const DWORD process_id = GetCurrentProcessId();
+	uint32_t    process_threads = 0;
+	THREADENTRY32 entry {};
+	entry.dwSize = sizeof(entry);
+	if (Thread32First(snapshot, &entry) != 0) {
+		do {
+			if (entry.th32OwnerProcessID != process_id) {
+				continue;
+			}
+			++process_threads;
+			const HANDLE thread_handle =
+			    OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+			if (thread_handle == nullptr) {
+				continue;
+			}
+
+			FILETIME creation {};
+			FILETIME exit {};
+			FILETIME kernel {};
+			FILETIME user {};
+			if (GetThreadTimes(thread_handle, &creation, &exit, &kernel, &user) != 0) {
+				auto& thread = now.threads[entry.th32ThreadID];
+				thread.cpu_ns =
+				    (FileTimeTo100Ns(kernel) + FileTimeTo100Ns(user)) * 100u;
+				thread.name = "thread " + std::to_string(entry.th32ThreadID);
+
+				if (get_thread_description != nullptr) {
+					PWSTR description = nullptr;
+					if (SUCCEEDED(get_thread_description(thread_handle, &description)) &&
+					    description != nullptr) {
+						const int length =
+						    WideCharToMultiByte(CP_UTF8, 0, description, -1, nullptr, 0,
+						                        nullptr, nullptr);
+						if (length > 1) {
+							thread.name.resize(static_cast<size_t>(length), '\0');
+							WideCharToMultiByte(CP_UTF8, 0, description, -1,
+							                    thread.name.data(), length, nullptr, nullptr);
+							thread.name.pop_back();
+						}
+					}
+					if (description != nullptr) {
+						LocalFree(description);
+					}
+				}
+			}
+			CloseHandle(thread_handle);
+		} while (Thread32Next(snapshot, &entry) != 0);
+	}
+	CloseHandle(snapshot);
+	stats.thread_count = process_threads;
+}
+
 struct PlatformState {};
 
 void SamplePlatform(PlatformState& /*state*/, HostStats& stats, Counters& now) {
@@ -98,6 +163,7 @@ void SamplePlatform(PlatformState& /*state*/, HostStats& stats, Counters& now) {
 		                            : system.dwMemoryLoad >= 80 ? MemoryPressure::Warning
 		                                                        : MemoryPressure::Normal;
 	}
+	SampleWindowsThreads(stats, now);
 }
 
 #else

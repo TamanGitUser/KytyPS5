@@ -465,7 +465,22 @@ uint32_t BuiltInForInput(IR::StageInputKind kind) {
 
 void DefineInputs(EmitterState& state) {
 	state.inputs.reserve(state.program.info.inputs.size());
-	for (const auto& input: state.program.info.inputs) {
+	for (const auto& source: state.program.info.inputs) {
+		const bool barycentric_builtin =
+		    source.kind == IR::StageInputKind::BaryCoordSmooth ||
+		    source.kind == IR::StageInputKind::BaryCoordSmoothSample ||
+		    source.kind == IR::StageInputKind::BaryCoordSmoothCentroid ||
+		    source.kind == IR::StageInputKind::BaryCoordNoPerspective;
+		if (!state.profile.fragment_barycentric && barycentric_builtin) {
+			// The device cannot legally consume these SPIR-V built-ins. Emit zero for explicit
+			// barycentric reads and let ordinary parameter inputs use fixed-function interpolation.
+			continue;
+		}
+		auto input = source;
+		if (!state.profile.fragment_barycentric && input.kind == IR::StageInputKind::Parameter) {
+			// Replace the three-vertex array interface with a normal interpolated varying.
+			input.per_vertex = false;
+		}
 		state.inputs.push_back({input});
 	}
 	const auto add_builtin = [&](IR::StageInputKind kind, uint32_t components,
@@ -824,7 +839,7 @@ void DefineModule(EmitterState& state) {
 		state.builder.RequireExtension("SPV_KHR_compute_shader_derivatives");
 	}
 	const bool fragment_barycentric =
-	    state.program.stage == ShaderType::Pixel &&
+	    state.profile.fragment_barycentric && state.program.stage == ShaderType::Pixel &&
 	    std::any_of(state.inputs.begin(), state.inputs.end(), [](const InputBinding& input) {
 		    return input.per_vertex || input.kind == IR::StageInputKind::BaryCoordSmooth ||
 		           input.kind == IR::StageInputKind::BaryCoordNoPerspective;

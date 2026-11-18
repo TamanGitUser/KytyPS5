@@ -1,8 +1,10 @@
+// GTX (Maxwell) fork changes: modified/added 2026-11-09. See FORK-NOTICE.md; retain upstream notices.
 #include "graphics/host_gpu/renderer/commandScheduler.h"
 
 #include "common/assert.h"
 #include "common/debugCounters.h"
 #include "graphics/host_gpu/graphicContext.h"
+#include "graphics/host_gpu/renderer/deviceLossReport.h"
 
 #include <algorithm>
 #include <optional>
@@ -298,6 +300,8 @@ CommandBuffer& CommandScheduler::BeginCommand() {
 	EXIT_IF(!m_command.IsInvalid());
 	m_command.m_buffer = m_command_pool.Commit();
 	m_command.Begin();
+	SetDiagnosticCheckpoint(m_graphics, m_command.m_buffer,
+	                        DiagnosticCheckpointKind::CommandBufferBegin);
 	m_dynamic_state.Invalidate();
 	return m_command;
 }
@@ -305,10 +309,12 @@ CommandBuffer& CommandScheduler::BeginCommand() {
 uint64_t CommandScheduler::Submit(SubmitInfo submit) {
 	EXIT_IF(m_command.IsInvalid());
 
-	m_command.End();
-	const auto buffer   = m_command.m_buffer;
-	auto&      graphics = m_graphics;
+	auto& graphics = m_graphics;
 	EXIT_IF(graphics.queue == nullptr);
+	SetDiagnosticCheckpoint(graphics, m_command.m_buffer,
+	                        DiagnosticCheckpointKind::CommandBufferBeforeSubmit);
+	m_command.End();
+	const auto buffer = m_command.m_buffer;
 
 	vk::Result result;
 	uint64_t   tick;
@@ -338,6 +344,7 @@ uint64_t CommandScheduler::Submit(SubmitInfo submit) {
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::QueueSubmits);
 
 	if (result != vk::Result::eSuccess) {
+		DeviceLossReport(graphics, result);
 		EXIT("vkQueueSubmit failed: %s, tick=%" PRIu64 "\n", vk::to_string(result).c_str(), tick);
 	}
 

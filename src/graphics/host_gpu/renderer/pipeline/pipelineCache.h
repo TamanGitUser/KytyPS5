@@ -213,6 +213,7 @@ private:
 		ShaderRecompiler::IR::ResourceSnapshot       resources;
 		ShaderRecompiler::IR::ResourceSpecialization specialization;
 		std::vector<ShaderModule>                    modules;
+		bool                                         uses_calls = false;
 		bool                                         skip_dispatch = false;
 
 		[[nodiscard]] std::span<const uint32_t> FunctionCode() const;
@@ -257,6 +258,9 @@ private:
 	std::unordered_map<uint64_t, ShaderTessellationInputInfo>                  m_tess_layouts;
 	// Records everything first created if a shader store is open, and writes the driver cache.
 	ShaderStoreWriter m_store;
+	uint64_t m_session_stored_modules = 0;
+	uint64_t m_session_stored_graphics_pipelines = 0;
+	uint64_t m_session_stored_tessellation_layouts = 0;
 
 	template <typename InputInfo>
 	const ShaderModule* GetProgram(const ShaderParams& params, InputInfo& input_info,

@@ -31,6 +31,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace Libs::Graphics {
 
 static thread_local Pm4Execution* g_current_execution = nullptr;
@@ -91,7 +95,14 @@ void GuestGpu::ProcessCommands() {
 			m_commands.pop_front();
 			EXIT_IF(m_pending_commands.fetch_sub(1, std::memory_order_acq_rel) == 0);
 		}
-		command();
+		if (Common::DebugCounters::Enabled()) {
+			Common::DebugCounters::ScopedTimer callback_timer(
+			    Common::DebugCounters::Counter::GpuCommandCallbacks,
+			    Common::DebugCounters::Counter::GpuCommandCallbackNs);
+			command();
+		} else {
+			command();
+		}
 	}
 }
 
@@ -388,6 +399,14 @@ void GuestGpu::WaitForIdle() {
 void GuestGpu::ThreadRun(void* data) {
 	auto* gpu = static_cast<GuestGpu*>(data);
 	EXIT_IF(gpu == nullptr);
+#if defined(_WIN32)
+	using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+	static const auto set_thread_description = reinterpret_cast<SetThreadDescriptionFn>(
+	    GetProcAddress(GetModuleHandleW(L"Kernel32.dll"), "SetThreadDescription"));
+	if (set_thread_description != nullptr) {
+		(void)set_thread_description(GetCurrentThread(), L"Kyty Guest GPU");
+	}
+#endif
 	KYTY_PROFILER_THREAD("Thread_Gpu");
 	g_gpu_state = gpu;
 
@@ -548,7 +567,11 @@ void CommandProcessor::SuspendPm4() {
 }
 
 void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
+	Common::DebugCounters::ScopedTimer pm4_timer(
+	    Common::DebugCounters::Counter::Pm4ProcessCalls,
+	    Common::DebugCounters::Counter::Pm4ProcessNs);
 	const bool debug_dump = graphics_debug_dump_enabled();
+	static thread_local uint32_t handler_sample_index = 0;
 	while (!execution.m_buffer_stack.empty()) {
 		if (g_gpu_state != nullptr) {
 			g_gpu_state->ProcessCommands();
@@ -604,8 +627,21 @@ void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
 			EXIT("unknown op\n\t%05" PRIx32 ":\n\tcmd_id = %08" PRIx32 "\n", offset, packet_header);
 		}
 
-		const auto packet_dw =
-		    handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+		uint32_t packet_dw = 0;
+		const bool sample_handler =
+		    ((handler_sample_index++ & 0xffu) == 0u) && Common::DebugCounters::Enabled();
+		if (sample_handler) {
+			const auto sample_start = std::chrono::steady_clock::now();
+			packet_dw = handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+			const auto sample_ns = static_cast<uint64_t>(
+			    std::chrono::duration_cast<std::chrono::nanoseconds>(
+			        std::chrono::steady_clock::now() - sample_start).count());
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::Pm4HandlerPackets, 256);
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::Pm4HandlerEstimatedNs,
+			                           sample_ns * 256);
+		} else {
+			packet_dw = handler(*this, packet_header & ~1u, packet + 1, remaining_dw, total_dw) + 1;
+		}
 		EXIT_IF(packet_dw > remaining_dw);
 		if (execution.m_suspended) {
 			return;
@@ -801,6 +837,7 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 	DrawIndirectArgs records {args_addr, draw_count, stride_in_bytes};
 	if (IndirectDrawOffsets(registers, records.offsets)) {
 		if (!indexed && executor.DrawAuto(CurrentBuffer(), {.indirect = records})) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectNativeBatches);
 			return;
 		}
 		if (indexed && m_index_buffer_size != 0 &&
@@ -808,10 +845,17 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 		                                         .index_addr          = IndexAddress(0),
 		                                         .index_type_and_size = m_index_type_and_size,
 		                                         .indirect            = records})) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectNativeBatches);
 			return;
 		}
 	}
 
+	// A guest packet can require per-subdraw register updates which Vulkan cannot express in one
+	// indirect command. Measure that CPU fallback separately from successful native batches.
+	Common::DebugCounters::Add(Common::DebugCounters::Counter::IndirectFallbackDraws, draw_count);
+	Common::DebugCounters::ScopedTimer fallback_timer(
+	    Common::DebugCounters::Counter::IndirectFallbackCalls,
+	    Common::DebugCounters::Counter::IndirectFallbackNs);
 	const uint32_t max_indices = m_index_buffer_size != 0 ? m_index_buffer_size : UINT32_MAX;
 	for (uint32_t i = 0; i < draw_count; i++) {
 		const auto addr = args_addr + static_cast<uint64_t>(i) * stride_in_bytes;
@@ -842,6 +886,9 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 void CommandProcessor::DispatchDirect(uint32_t thread_group_x, uint32_t thread_group_y,
                                       uint32_t thread_group_z, uint32_t mode) {
 	m_sh_ctx.SetCsWaveSize(Pm4::ComputeWaveSize(mode));
+	Common::DebugCounters::ScopedTimer dispatch_timer(
+	    Common::DebugCounters::Counter::DispatchHostCalls,
+	    Common::DebugCounters::Counter::DispatchHostNs);
 	m_renderer.GetRenderExecutor().DispatchDirect(CurrentBuffer(), thread_group_x, thread_group_y,
 	                                              thread_group_z, mode, IsAsyncComputeQueue());
 }
@@ -859,6 +906,9 @@ void CommandProcessor::DispatchIndirect(uint64_t args_addr, uint32_t mode) {
 		return;
 	}
 	m_sh_ctx.SetCsWaveSize(Pm4::ComputeWaveSize(mode));
+	Common::DebugCounters::ScopedTimer dispatch_timer(
+	    Common::DebugCounters::Counter::DispatchHostCalls,
+	    Common::DebugCounters::Counter::DispatchHostNs);
 	m_renderer.GetRenderExecutor().DispatchIndirect(CurrentBuffer(), args_addr, mode,
 	                                                IsAsyncComputeQueue());
 }

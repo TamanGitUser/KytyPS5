@@ -1,6 +1,7 @@
 #include "graphics/host_gpu/renderer/cache/samplerCache.h"
 
 #include "common/assert.h"
+#include "common/emulatorConfig.h"
 #include "common/logging/log.h"
 #include "graphics/guest_gpu/gpu_defs.h"
 #include "graphics/host_gpu/renderer/renderContext.h"
@@ -15,7 +16,9 @@ SamplerCache::~SamplerCache() {
 }
 
 vk::Sampler SamplerCache::GetSampler(const ShaderSamplerResource& r, bool integer_border) {
-	const SamplerKey key {r.fields[0], r.fields[1], r.fields[2], r.fields[3], integer_border};
+	const SamplerKey key {r.fields[0], r.fields[1], r.fields[2], r.fields[3], integer_border,
+	                      Config::GetAnisotropyOverride(),
+	                      static_cast<uint32_t>(Config::GetTextureMipBiasQuarters())};
 	if (auto iter = m_samplers.find(key); iter != m_samplers.end()) {
 		return iter->second;
 	}
@@ -46,7 +49,7 @@ vk::Sampler SamplerCache::GetSampler(const ShaderSamplerResource& r, bool intege
 		return vk::Filter::eNearest;
 	};
 
-	const bool aniso = is_aniso_filter(mag_filter) || is_aniso_filter(min_filter);
+	bool aniso = is_aniso_filter(mag_filter) || is_aniso_filter(min_filter);
 	if (aniso) {
 		switch (static_cast<Prospero::SamplerAnisoRatio>(r.MaxAnisoRatio())) {
 			case Prospero::SamplerAnisoRatio::kOne: aniso_ratio = 1.0f; break;
@@ -57,6 +60,12 @@ vk::Sampler SamplerCache::GetSampler(const ShaderSamplerResource& r, bool intege
 			// Reserved encodings 5-7 fall back to the maximum ratio.
 			default: aniso_ratio = 16.0f; break;
 		}
+	}
+	const auto anisotropy_override = Config::GetAnisotropyOverride();
+	const auto max_anisotropy = m_graphics.GetPhysicalDeviceProperties().limits.maxSamplerAnisotropy;
+	if (anisotropy_override != 0) {
+		aniso = anisotropy_override >= 2 && max_anisotropy >= 2.0f;
+		aniso_ratio = aniso ? std::min(static_cast<float>(anisotropy_override), max_anisotropy) : 1.0f;
 	}
 
 	const auto mip_filter = r.MipFilter();
@@ -114,6 +123,10 @@ vk::Sampler SamplerCache::GetSampler(const ShaderSamplerResource& r, bool intege
 
 	sampler_info.magFilter = to_vk_filter(mag_filter);
 	sampler_info.minFilter = to_vk_filter(min_filter);
+	if (anisotropy_override >= 2) {
+		sampler_info.magFilter = vk::Filter::eLinear;
+		sampler_info.minFilter = vk::Filter::eLinear;
+	}
 	sampler_info.mipmapMode =
 	    (static_cast<Prospero::SamplerMipFilter>(mip_filter) == Prospero::SamplerMipFilter::kLinear
 	         ? vk::SamplerMipmapMode::eLinear
@@ -122,12 +135,12 @@ vk::Sampler SamplerCache::GetSampler(const ShaderSamplerResource& r, bool intege
 	sampler_info.addressModeV = to_vk_address_mode(r.ClampY());
 	sampler_info.addressModeW = to_vk_address_mode(r.ClampZ());
     const auto max_lod_bias = m_graphics.GetPhysicalDeviceProperties().limits.maxSamplerLodBias;
-    sampler_info.mipLodBias = std::clamp(
-        static_cast<float>(static_cast<int16_t>((r.LodBias() ^ 0x2000u) - 0x2000u)) / 256.0f,
-        -max_lod_bias, max_lod_bias
-    );
+    const auto guest_mip_lod_bias =
+        static_cast<float>(static_cast<int16_t>((r.LodBias() ^ 0x2000u) - 0x2000u)) / 256.0f;
+    sampler_info.mipLodBias = std::clamp(guest_mip_lod_bias + Config::GetTextureMipBias(),
+                                         -max_lod_bias, max_lod_bias);
 	sampler_info.anisotropyEnable        = (aniso ? VK_TRUE : VK_FALSE);
-	sampler_info.maxAnisotropy           = aniso_ratio;
+	sampler_info.maxAnisotropy           = aniso ? aniso_ratio : 1.0f;
 	sampler_info.compareEnable           = (r.DepthCompareFunc() != 0 ? VK_TRUE : VK_FALSE);
 	sampler_info.compareOp               = static_cast<vk::CompareOp>(r.DepthCompareFunc());
 	sampler_info.minLod                  = min_lod;

@@ -38,7 +38,7 @@
          <property name="verticalSpacing">
           <number>8</number>
          </property>
-         <item row="0" column="0">
+         <item row="18" column="0">
           <widget class="QGroupBox" name="user_profile_group">
            <property name="title">
             <string>User profile</string>
@@ -199,14 +199,125 @@
             </item>
             <item row="11" column="1">
              <widget class="QCheckBox" name="checkBox_shader_cache">
-              <property name="toolTip"><string>Save compiled shaders and pipelines per game and load them at startup.</string></property>
-              <property name="text"><string>Cache shaders</string></property>
+              <property name="toolTip"><string>Build a cumulative game shader/pipeline cache. Each session records newly encountered shader variants and graphics pipeline states; the next compatible launch precompiles the entire stored set. The cache grows as you visit more areas. It cannot discover variants the game has never executed.</string></property>
+              <property name="text"><string>Build cumulative game precompiler cache</string></property>
              </widget>
             </item>
             <item row="12" column="1">
              <widget class="QCheckBox" name="checkBox_relaxed_shader_float">
               <property name="toolTip"><string>Use the host GPU's native float operations in shaders. Faster, but can be inaccurate.</string></property>
               <property name="text"><string>Relaxed shader float math</string></property>
+             </widget>
+            </item>
+            <item row="13" column="1">
+             <widget class="QCheckBox" name="checkBox_nvidia_gpu_diagnostics">
+              <property name="toolTip"><string>Enable NVIDIA shader/resource tracking and Vulkan GPU crash checkpoints when supported by the driver. This can add overhead; disable it to reduce diagnostic overhead.</string></property>
+              <property name="text"><string>Enable NVIDIA GPU crash diagnostics</string></property>
+              <property name="checked"><bool>true</bool></property>
+             </widget>
+            </item>
+            <item row="14" column="0">
+             <widget class="QLabel" name="label_upscaler"><property name="text"><string>Spatial upscaler:</string></property></widget>
+            </item>
+            <item row="14" column="1">
+             <widget class="QComboBox" name="comboBox_upscaler">
+              <property name="toolTip"><string>AMD FSR 1 uses EASU spatial upscaling followed by adjustable RCAS sharpening for eligible SDR presentation. It does not change the game's internal render resolution. FSR 2/3 remain unavailable until temporal inputs and integration are implemented.</string></property>
+              <item><property name="text"><string>Off (linear blit)</string></property></item>
+              <item><property name="text"><string>AMD FSR 1 (EASU + RCAS)</string></property></item>
+              <item><property name="text"><string>AMD FSR 2 (unavailable)</string></property></item>
+              <item><property name="text"><string>AMD FSR 3.1 (unavailable)</string></property></item>
+             </widget>
+            </item>
+            <item row="15" column="0">
+             <widget class="QLabel" name="label_fsr1_sharpness">
+              <property name="toolTip"><string>FSR 1 RCAS sharpening strength. 0 is the minimum effect and 100 is maximum sharpness. Applies only when AMD FSR 1 is selected.</string></property>
+              <property name="text"><string>FSR 1 sharpening:</string></property>
+             </widget>
+            </item>
+            <item row="15" column="1">
+             <widget class="QSpinBox" name="spinBox_fsr1_sharpness">
+              <property name="toolTip"><string>Higher values apply stronger FSR 1 RCAS sharpening. Default: 50%.</string></property>
+              <property name="suffix"><string>%</string></property>
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>100</number></property>
+              <property name="singleStep"><number>5</number></property>
+              <property name="value"><number>50</number></property>
+             </widget>
+            </item>
+            <item row="16" column="0">
+             <widget class="QLabel" name="label_demons_souls_render_preset">
+              <property name="toolTip"><string>Experimental in-memory 3D render-resolution profiles for Demon's Souls PPSA01341 01.007.000. The emulator verifies the mode-3 code signature, 3840x2160 output pair and original 2560x1440 render pair before changing the game’s 3D render size and mode lookup table. The 4K output and TAA/post-processing target remain unchanged. Selecting a non-Auto profile also enables FSR 1 presentation processing; this control changes the game’s internal resolution, not the FSR algorithm.</string></property>
+              <property name="text"><string>Demon's Souls render resolution:</string></property>
+             </widget>
+            </item>
+            <item row="16" column="1">
+             <widget class="QComboBox" name="comboBox_demons_souls_render_preset">
+              <property name="toolTip"><string>Selecting a profile enables AMD FSR 1 and applies a verified game-side render resolution for 4K output: Ultra Quality 2944x1656, Quality 2560x1440, Balanced 2264x1272 or Performance 1920x1080. Performance modes reduce internal rendering work; Ultra Quality may cost FPS. Auto leaves the game resolution unchanged. Only the exact verified PPSA01341 01.007.000 eboot is supported. FSR 1 EASU is used when the game's presentation image is below the output size; otherwise RCAS sharpening is applied to the same-size image.</string></property>
+              <item><property name="text"><string>Auto (FSR profile off)</string></property></item>
+              <item><property name="text"><string>Ultra Quality — 2944x1656</string></property></item>
+              <item><property name="text"><string>Quality — 2560x1440</string></property></item>
+              <item><property name="text"><string>Balanced — 2264x1272</string></property></item>
+              <item><property name="text"><string>Performance — 1920x1080</string></property></item>
+             </widget>
+            </item>
+            <item row="17" column="0">
+             <widget class="QLabel" name="label_anisotropy_override"><property name="text"><string>Anisotropic filtering:</string></property></widget>
+            </item>
+            <item row="17" column="1">
+             <widget class="QComboBox" name="comboBox_anisotropy_override">
+              <property name="toolTip"><string>Manual anisotropic-filtering changes select the Custom texture profile. Texture presets may set this to Game default or Off.</string></property>
+              <item><property name="text"><string>Game default</string></property></item>
+              <item><property name="text"><string>Off</string></property></item>
+              <item><property name="text"><string>2x</string></property></item>
+              <item><property name="text"><string>4x</string></property></item>
+              <item><property name="text"><string>8x</string></property></item>
+              <item><property name="text"><string>16x</string></property></item>
+             </widget>
+            </item>
+            <item row="18" column="0">
+             <widget class="QLabel" name="label_texture_quality">
+              <property name="toolTip"><string>Chooses a positive mip bias to request lower-detail mip levels where the game supplies them. This is not host texture downscaling and does not free allocated VRAM.</string></property>
+              <property name="text"><string>Texture detail:</string></property>
+             </widget>
+            </item>
+            <item row="18" column="1">
+             <widget class="QComboBox" name="comboBox_texture_quality">
+              <property name="toolTip"><string>Original preserves game sampling. Reduced, Low and Very low use progressively coarser mip levels; Low and Very low also turn off anisotropic filtering. This may reduce texture bandwidth, but does not shrink texture allocations or free VRAM.</string></property>
+              <item><property name="text"><string>Original</string></property></item>
+              <item><property name="text"><string>Reduced</string></property></item>
+              <item><property name="text"><string>Low</string></property></item>
+              <item><property name="text"><string>Very low</string></property></item>
+              <item><property name="text"><string>Custom</string></property></item>
+             </widget>
+            </item>
+            <item row="19" column="0">
+             <widget class="QLabel" name="label_texture_mip_bias">
+              <property name="toolTip"><string>Positive values select lower-resolution mip levels; this affects sampling/bandwidth, not allocated VRAM.</string></property>
+              <property name="text"><string>Custom texture mip bias:</string></property>
+             </widget>
+            </item>
+            <item row="19" column="1">
+             <widget class="QDoubleSpinBox" name="doubleSpinBox_texture_mip_bias">
+              <property name="toolTip"><string>Positive values may reduce texture sampling bandwidth, but do not free texture memory.</string></property>
+              <property name="decimals"><number>2</number></property>
+              <property name="minimum"><double>-2.000000000000000</double></property>
+              <property name="maximum"><double>2.000000000000000</double></property>
+              <property name="singleStep"><double>0.250000000000000</double></property>
+              <property name="value"><double>0.000000000000000</double></property>
+             </widget>
+            </item>
+            <item row="20" column="0">
+             <widget class="QLabel" name="label_demons_souls_texture_reduce_levels">
+              <property name="toolTip"><string>Experimental texture-memory reduction for PPSA01341 01.007.000 only. The emulator checks the game streamer signature and omits the same largest mip levels from eligible large, single-layer, block-compressed 2D textures in both game streaming and host GPU allocation. Render targets, storage/depth textures, arrays and unsupported formats are not reduced. Some distant or small texture detail may look softer.</string></property>
+              <property name="text"><string>Texture VRAM reduction:</string></property>
+             </widget>
+            </item>
+            <item row="20" column="1">
+             <widget class="QComboBox" name="comboBox_demons_souls_texture_reduce_levels">
+              <property name="toolTip"><string>Off is the safe default. Drop 1 largest BC mip or Drop 2 largest BC mips can reduce host VRAM allocation for eligible large textures. Only the exact PPSA01341 01.007.000 build is supported; if the runtime signature does not match, reduction remains off.</string></property>
+              <item><property name="text"><string>Off</string></property></item>
+              <item><property name="text"><string>Drop 1 largest BC mip</string></property></item>
+              <item><property name="text"><string>Drop 2 largest BC mips</string></property></item>
              </widget>
             </item>
            </layout>

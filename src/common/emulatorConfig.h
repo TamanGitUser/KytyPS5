@@ -75,6 +75,13 @@ struct ConfigOptions {
 	bool                   vulkan_validation_enabled   = false;
 	bool                   shader_validation_enabled   = false;
 	bool                   shader_cache_enabled        = false;
+	bool                   nvidia_gpu_diagnostics_enabled = true;
+	bool                   fsr1_enabled                 = false;
+	uint32_t               fsr1_sharpness               = 50;
+	uint32_t               demons_souls_render_height   = 0; // 0=game default; otherwise 720-2160
+	uint32_t               demons_souls_texture_reduce_levels = 0; // 0=off, 1-2=largest BC mip levels omitted
+	uint32_t               anisotropy_override          = 0;
+	int32_t                texture_mip_bias_quarters    = 0;
 	LogDirection           shader_log_direction        = LogDirection::Silent;
 	std::filesystem::path  shader_log_folder           = "_Shaders";
 	bool                   command_buffer_dump_enabled = false;
@@ -139,6 +146,14 @@ bool     PsnEmulationEnabled();
 uint32_t GetVblankFrequency();
 uint32_t GetConsoleLanguage();
 bool     VulkanValidationEnabled();
+bool     NvidiaGpuDiagnosticsEnabled();
+bool     Fsr1Enabled();
+uint32_t GetFsr1Sharpness();
+uint32_t GetDemonsSoulsRenderHeight();
+uint32_t GetDemonsSoulsTextureReduceLevels();
+uint32_t GetAnisotropyOverride();
+int32_t  GetTextureMipBiasQuarters();
+float    GetTextureMipBias();
 
 bool                   ShaderValidationEnabled();
 bool                   ShaderCacheEnabled();

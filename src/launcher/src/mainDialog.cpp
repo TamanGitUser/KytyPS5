@@ -22,6 +22,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRadioButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -282,6 +283,19 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 	AddFlag(args, info.occlusion_queries_enabled, "--occlusion-queries");
 	AddFlag(args, info.relaxed_shader_float, "--relaxed-shader-float");
 	AddFlag(args, info.shader_cache_enabled, "--shader-cache");
+	const bool supports_demons_souls_render_profiles =
+	    info.title_id.compare(QStringLiteral("PPSA01341"), Qt::CaseInsensitive) == 0 &&
+	    info.gameVersion == QStringLiteral("01.007.000") &&
+	    QFileInfo(info.basedir).isDir() &&
+	    QFileInfo(QDir(info.basedir).filePath(info.elf)).isFile() &&
+	    QFileInfo(info.elf).fileName().compare(QStringLiteral("eboot.bin"), Qt::CaseInsensitive) == 0;
+	const int render_preset =
+	    supports_demons_souls_render_profiles ? qBound(0, info.demons_souls_render_preset, 4) : 0;
+	AddFlag(args, info.fsr1_enabled || render_preset != 0, "--fsr1");
+	args << "--fsr1-sharpness" << QString::number(info.fsr1_sharpness);
+	args << "--anisotropy-override" << QString::number(info.anisotropy_override);
+	args << "--texture-mip-bias-quarter" << QString::number(info.texture_mip_bias_quarters);
+	AddFlag(args, !info.nvidia_gpu_diagnostics_enabled, "--no-nvidia-gpu-diagnostics");
 	args << "--vblank-frequency" << QString::number(info.vblank_frequency);
 	args << "--console-language" << QString::number(info.console_language);
 	AddFlag(args, info.vulkan_validation_enabled, "--vulkan-validation");
@@ -316,8 +330,16 @@ static QStringList CreateEmulatorArgs(const Configuration& info) {
 		args << "--addcont" << entry;
 	}
 
+	static constexpr int render_heights[] {0, 1656, 1440, 1272, 1080};
+	args << "--demons-souls-render-height"
+	     << QString::number(render_heights[render_preset]);
+	args << "--demons-souls-texture-reduce-levels"
+	     << QString::number(supports_demons_souls_render_profiles
+	                             ? qBound(0, info.demons_souls_texture_reduce_levels, 2)
+	                             : 0);
+
 	const auto patch_plan = Cheats::PlanPath(info.title_id);
-	if (QFileInfo::exists(patch_plan)) {
+	if (!patch_plan.isEmpty() && QFileInfo::exists(patch_plan)) {
 		args << "--game-patch" << patch_plan;
 	}
 
@@ -415,8 +437,8 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bo
 
 	auto args = CreateEmulatorArgs(info);
 	if (args.isEmpty()) {
-		QMessageBox::critical(this, tr("Error"), tr("Invalid emulator configuration"));
-		QApplication::quit();
+		QMessageBox::critical(this, tr("Launch configuration error"),
+		                      tr("Invalid emulator configuration"));
 		return;
 	}
 
@@ -438,6 +460,37 @@ void MainDialog::RunInterpreter(QProcess* process, const Configuration& info, bo
 	    CmdCommand(QDir::toNativeSeparators(interpreter), args, close_terminal));
 #endif
 	process->setWorkingDirectory(QFileInfo(interpreter).absolutePath());
+#if defined(_WIN32)
+	// Keep known third-party capture/overlay hooks out of Kyty's Vulkan call chain.
+	// OBS exposes DISABLE_VULKAN_OBS_CAPTURE in its implicit-layer manifest.
+	// RTSS is filtered by Vulkan layer name without disabling other implicit layers.
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(QStringLiteral("DISABLE_VULKAN_OBS_CAPTURE"), QStringLiteral("1"));
+	QStringList layer_filters =
+	    environment.value(QStringLiteral("VK_LOADER_LAYERS_DISABLE")).split(
+	        QLatin1Char(','), Qt::SkipEmptyParts);
+	bool disable_rtss = false;
+	for (const auto& filter: layer_filters) {
+		const auto normalized = filter.trimmed();
+		if (normalized == QLatin1String("*") ||
+		    normalized.compare(QLatin1String("~all~"), Qt::CaseInsensitive) == 0 ||
+		    normalized.compare(QLatin1String("~implicit~"), Qt::CaseInsensitive) == 0 ||
+		    normalized.contains(QLatin1String("RTSS"), Qt::CaseInsensitive)) {
+			disable_rtss = true;
+			break;
+		}
+	}
+	if (!disable_rtss) {
+		layer_filters.push_back(QStringLiteral("*RTSS*"));
+	}
+	environment.insert(QStringLiteral("VK_LOADER_LAYERS_DISABLE"),
+	                   layer_filters.join(QLatin1Char(',')));
+	if (!environment.contains(QStringLiteral("VK_LOADER_DEBUG"))) {
+		environment.insert(QStringLiteral("VK_LOADER_DEBUG"),
+		                   QStringLiteral("warn,layer"));
+	}
+	process->setProcessEnvironment(environment);
+#endif
 #if defined(_WIN32)
 	process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
 		args->flags |= static_cast<uint32_t>(CREATE_NEW_CONSOLE);
