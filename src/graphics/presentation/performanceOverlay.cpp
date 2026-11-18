@@ -612,6 +612,11 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		    Fmt("%.1f ms/s  (%.0f/s)",
 		        Rate(shown, Counter::ComputeSrtWalkNs) / 1e6,
 		        Rate(shown, Counter::ComputeSrtWalkCalls)));
+		Row("        setup / native walker / capture",
+		    Fmt("%.1f / %.1f / %.1f ms/s",
+		        Rate(shown, Counter::ComputeSrtSetupNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtExecuteNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtCaptureNs) / 1e6));
 		Row("      Indirect descriptor tables",
 		    Fmt("%.1f ms/s  (%.0f/s)",
 		        Rate(shown, Counter::ComputeIndirectDescriptorNs) / 1e6,
