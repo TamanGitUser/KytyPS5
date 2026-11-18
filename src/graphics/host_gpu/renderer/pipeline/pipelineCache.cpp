@@ -481,9 +481,9 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 				Common::DebugCounters::ScopedTimer timer(
 				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
 				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
-				return cached.FindModule<true>(runtime, push_data_cursor);
+				return cached.template FindModule<true>(runtime, push_data_cursor);
 			} else {
-				return cached.FindModule<true>(runtime, push_data_cursor);
+				return cached.template FindModule<true>(runtime, push_data_cursor);
 			}
 		};
 		const auto find_module_without_calls = [&] {
@@ -491,9 +491,9 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 				Common::DebugCounters::ScopedTimer timer(
 				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
 				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
-				return cached.FindModule<false>(runtime, push_data_cursor);
+				return cached.template FindModule<false>(runtime, push_data_cursor);
 			} else {
-				return cached.FindModule<false>(runtime, push_data_cursor);
+				return cached.template FindModule<false>(runtime, push_data_cursor);
 			}
 		};
 		if (cached.uses_calls && cached.call_source == nullptr) {
@@ -587,7 +587,7 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		    program.resource_plan, runtime, program.resources, program.specialization));
 	} else if (source_changed) {
 		entry->second.resource_plan = ShaderRecompiler::IR::ExtractResourcePlan(translated.program);
-		if (const auto* module = entry->second.FindModule<true>(runtime, push_data_cursor)) {
+		if (const auto* module = entry->second.template FindModule<true>(runtime, push_data_cursor)) {
 			return bind(*module);
 		}
 	}
