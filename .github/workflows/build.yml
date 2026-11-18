@@ -1,10 +1,10 @@
 name: Build KytyPS5 (Windows)
 
-# This fork's Windows build (Demon's Souls, see README.md): a manual run (Actions > Build KytyPS5 (Windows) >
-# Run workflow) or a pushed v* tag builds the release package and publishes it as a GitHub release, marked
-# latest (README.md links to the latest one). Pushes build nothing.
+# A push to the GTX/Maxwell combination branch builds a downloadable Windows test artifact.
+# Version tags additionally publish a GitHub release; manual runs on branches never publish releases.
 on:
   push:
+    branches: [ 'ci/chenxiao-maxwell-combination' ]
     tags: [ 'v*' ]
   workflow_dispatch:
 
@@ -154,6 +154,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: startsWith(github.ref, 'refs/tags/v')
     name: Publish release
     needs: windows
     runs-on: ubuntu-latest
