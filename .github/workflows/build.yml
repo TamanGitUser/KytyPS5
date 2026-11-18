@@ -207,11 +207,37 @@ jobs:
             Copy-Item $licenseFile.FullName $destination -Force
           }
 
+      - name: Verify Windows emulator debug symbols
+        shell: pwsh
+        run: |
+          $emulator = "_Build/windows/kyty_emulator.exe"
+          $pdb = "_Build/windows/kyty_emulator.pdb"
+          foreach ($path in @($emulator, $pdb)) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Required Windows diagnostic file was not generated: $path"
+            }
+          }
+          $pdbInfo = Get-Item -LiteralPath $pdb
+          if ($pdbInfo.Length -le 0) {
+            throw "The Windows emulator PDB is empty."
+          }
+          Write-Host "Matching emulator and PDB generated."
+          Write-Host ("PDB size: {0:N0} bytes" -f $pdbInfo.Length)
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GTX-MAXWELL-of-KytyPS5-Windows-x64
           path: _Build/windows/install/**
+          if-no-files-found: error
+
+      - name: Upload Windows emulator debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: GTX-MAXWELL-of-KytyPS5-Windows-x64-Symbols
+          path: |
+            _Build/windows/kyty_emulator.exe
+            _Build/windows/kyty_emulator.pdb
           if-no-files-found: error
 
   linux:
