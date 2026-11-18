@@ -3211,6 +3211,24 @@ static void* RunThread(void* arg) {
 	os_thread_id = GetHostThreadId();
 #endif
 	thread->host_thread_id = os_thread_id;
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+	// Expose the guest PS5 thread name to the Windows performance sampler.
+	if (!thread->name.empty()) {
+		using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+		static const auto set_thread_description = reinterpret_cast<SetThreadDescriptionFn>(
+		    GetProcAddress(GetModuleHandleW(L"Kernel32.dll"), "SetThreadDescription"));
+		if (set_thread_description != nullptr) {
+			const int length = MultiByteToWideChar(CP_UTF8, 0, thread->name.c_str(), -1, nullptr, 0);
+			if (length > 1) {
+				std::vector<wchar_t> description(static_cast<size_t>(length));
+				if (MultiByteToWideChar(CP_UTF8, 0, thread->name.c_str(), -1,
+				                        description.data(), length) == length) {
+					(void)set_thread_description(GetCurrentThread(), description.data());
+				}
+			}
+		}
+	}
+#endif
 #if KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 	if (!thread->name.empty()) {
 #if defined(__APPLE__)

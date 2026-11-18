@@ -31,6 +31,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace Libs::Graphics {
 
 static thread_local Pm4Execution* g_current_execution = nullptr;
@@ -395,6 +399,14 @@ void GuestGpu::WaitForIdle() {
 void GuestGpu::ThreadRun(void* data) {
 	auto* gpu = static_cast<GuestGpu*>(data);
 	EXIT_IF(gpu == nullptr);
+#if defined(_WIN32)
+	using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+	static const auto set_thread_description = reinterpret_cast<SetThreadDescriptionFn>(
+	    GetProcAddress(GetModuleHandleW(L"Kernel32.dll"), "SetThreadDescription"));
+	if (set_thread_description != nullptr) {
+		(void)set_thread_description(GetCurrentThread(), L"Kyty Guest GPU");
+	}
+#endif
 	KYTY_PROFILER_THREAD("Thread_Gpu");
 	g_gpu_state = gpu;
 

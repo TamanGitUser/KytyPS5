@@ -607,6 +607,26 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeCallRefreshNs) / 1e6));
 		Row("    Cached resource resolve",
 		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeResourceResolveNs) / 1e6));
+		// Indirect descriptor time is a nested subset of the buffer/image/sampler rows.
+		Row("      SRT walk",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeSrtWalkNs) / 1e6,
+		        Rate(shown, Counter::ComputeSrtWalkCalls)));
+		Row("      Indirect descriptor tables",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeIndirectDescriptorNs) / 1e6,
+		        Rate(shown, Counter::ComputeIndirectDescriptorCalls)));
+		Row("      Uniform fill analysis",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeUniformFillNs) / 1e6));
+		Row("      Buffer / image / sampler decode",
+		    Fmt("%.1f / %.1f / %.1f ms/s",
+		        Rate(shown, Counter::ComputeBufferMaterializationNs) / 1e6,
+		        Rate(shown, Counter::ComputeImageMaterializationNs) / 1e6,
+		        Rate(shown, Counter::ComputeSamplerMaterializationNs) / 1e6));
+		Row("      Specialization build",
+		    Fmt("%.1f ms/s  (%.0f/s)",
+		        Rate(shown, Counter::ComputeSpecializationBuildNs) / 1e6,
+		        Rate(shown, Counter::ComputeSpecializationBuildCalls)));
 		Row("    Program cache hits / misses",
 		    Fmt("%.0f / %.0f per s",
 		        Rate(shown, Counter::ComputeCacheHits),
