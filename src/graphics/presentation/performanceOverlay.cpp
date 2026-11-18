@@ -599,6 +599,18 @@ void DrawFramesAndCpu(const Snapshot& shown, vk::Extent2D extent) {
 		        Rate(shown, Counter::DispatchIndirectCalls)));
 		Row("  Compute program lookup",
 		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeProgramNs) / 1e6));
+		Row("    Compute parameter preparation",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeParamsNs) / 1e6));
+		Row("    Program key / map lookup",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeKeyLookupNs) / 1e6));
+		Row("    Cached call-source refresh",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeCallRefreshNs) / 1e6));
+		Row("    Cached resource resolve",
+		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputeResourceResolveNs) / 1e6));
+		Row("    Program cache hits / misses",
+		    Fmt("%.0f / %.0f per s",
+		        Rate(shown, Counter::ComputeCacheHits),
+		        Rate(shown, Counter::ComputeCacheMisses)));
 		Row("  Compute pipeline lookup",
 		    Fmt("%.1f ms/s", Rate(shown, Counter::ComputePipelineNs) / 1e6));
 		Row("  Compute resource binding",

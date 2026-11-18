@@ -429,14 +429,30 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 		runtime.workgroup_counts   = input_info.workgroup_counts;
 		runtime.indirect_args_address = input_info.indirect_args_address;
 	}
-	m_lookup_key.stage           = options.stage;
-	m_lookup_key.hash            = params.hash;
-	m_lookup_key.user_data_count = params.user_data_count;
-	BuildStageStaticKey(input_info, m_lookup_key.static_state);
-	options.shader_hash = params.hash;
-	options.user_data   = user_data;
-	options.back_code   = params.back_code;
-	auto entry = m_program_cache.find(m_lookup_key);
+	auto entry = [&] {
+		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+			Common::DebugCounters::ScopedTimer timer(
+			    Common::DebugCounters::Counter::ComputeKeyLookupCalls,
+			    Common::DebugCounters::Counter::ComputeKeyLookupNs);
+			m_lookup_key.stage           = options.stage;
+			m_lookup_key.hash            = params.hash;
+			m_lookup_key.user_data_count = params.user_data_count;
+			BuildStageStaticKey(input_info, m_lookup_key.static_state);
+			options.shader_hash = params.hash;
+			options.user_data   = user_data;
+			options.back_code   = params.back_code;
+			return m_program_cache.find(m_lookup_key);
+		} else {
+			m_lookup_key.stage           = options.stage;
+			m_lookup_key.hash            = params.hash;
+			m_lookup_key.user_data_count = params.user_data_count;
+			BuildStageStaticKey(input_info, m_lookup_key.static_state);
+			options.shader_hash = params.hash;
+			options.user_data   = user_data;
+			options.back_code   = params.back_code;
+			return m_program_cache.find(m_lookup_key);
+		}
+	}();
 	const auto bind = [&](const ShaderModule& module) {
 		input_info.stage = {.module = &module, .resources = &entry->second.resources};
 		module.info.bindings.AdvancePushData(push_data_cursor);
@@ -444,9 +460,42 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 	};
 	bool source_changed = false;
 	if (entry != m_program_cache.end()) {
+		if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+			Common::DebugCounters::Add(Common::DebugCounters::Counter::ComputeCacheHits);
+		}
 		auto& cached = entry->second;
 		if (cached.skip_dispatch) return nullptr;
 		ShaderModule* module = nullptr;
+		const auto refresh_call_source = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeCallRefreshCalls,
+				    Common::DebugCounters::Counter::ComputeCallRefreshNs);
+				return cached.RefreshCallSource(runtime);
+			} else {
+				return cached.RefreshCallSource(runtime);
+			}
+		};
+		const auto find_module_with_calls = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
+				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
+				return cached.FindModule<true>(runtime, push_data_cursor);
+			} else {
+				return cached.FindModule<true>(runtime, push_data_cursor);
+			}
+		};
+		const auto find_module_without_calls = [&] {
+			if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+				Common::DebugCounters::ScopedTimer timer(
+				    Common::DebugCounters::Counter::ComputeResourceResolveCalls,
+				    Common::DebugCounters::Counter::ComputeResourceResolveNs);
+				return cached.FindModule<false>(runtime, push_data_cursor);
+			} else {
+				return cached.FindModule<false>(runtime, push_data_cursor);
+			}
+		};
 		if (cached.uses_calls && cached.call_source == nullptr) {
 			// The store keeps the linked function code with callable shader variants. Rebuild the
 			// guest call-source graph on first use, then match its current linked code to a module.
@@ -471,19 +520,21 @@ const ShaderModule* PipelineCache::GetProgram(const ShaderParams& params, InputI
 			} else {
 				cached.call_source =
 				    std::make_unique<ShaderRecompiler::ShaderSource>(std::move(restored_source));
-				cached.RefreshCallSource(runtime);
+				refresh_call_source();
 				source_changed = true;
 			}
 		}
 		if (cached.call_source) {
 			if (!source_changed) {
-				source_changed = cached.RefreshCallSource(runtime);
-				if (!source_changed) module = cached.FindModule<true>(runtime, push_data_cursor);
+				source_changed = refresh_call_source();
+				if (!source_changed) module = find_module_with_calls();
 			}
 		} else if (!source_changed) {
-			module = cached.FindModule<false>(runtime, push_data_cursor);
+			module = find_module_without_calls();
 		}
 		if (module != nullptr) return bind(*module);
+	} else if constexpr (std::is_same_v<InputInfo, ShaderComputeInputInfo>) {
+		Common::DebugCounters::Add(Common::DebugCounters::Counter::ComputeCacheMisses);
 	}
 
 	const bool diagnostic_shader =
@@ -964,7 +1015,12 @@ void PipelineCache::GetGraphicsPrograms(const CommandBuffer& command, DrawRender
 const ShaderModule* PipelineCache::GetComputeProgram(const HW::ComputeShaderInfo& regs,
                                                      ShaderComputeInputInfo&      input_info) {
 	input_info.host_subgroup_size = m_graphics.SupportsComputeWave64() ? 64u : 32u;
-	const auto        params      = PrepareProgram(regs, input_info);
+	const auto params = [&] {
+		Common::DebugCounters::ScopedTimer timer(
+		    Common::DebugCounters::Counter::ComputeParamsCalls,
+		    Common::DebugCounters::Counter::ComputeParamsNs);
+		return PrepareProgram(regs, input_info);
+	}();
 	input_info.lds_storage = input_info.lds_size_dwords * 4u >
 	    m_graphics.GetPhysicalDeviceProperties().limits.maxComputeSharedMemorySize;
 	uint32_t          push_data_cursor = 0;
