@@ -1548,7 +1548,15 @@ void RenderExecutor::PrepareGraphicsBindingsInto(const ShaderStageRuntime& verte
 	// refresh asking the buffer cache for its bytes): the old Vulkan buffer no longer owns the bytes, and the draw's writes
 	// there are lost (an 8 GB laptop's culling chain hung on counts it read later, 10-18). Resolved again until nothing was
 	// unregistered meanwhile.
-	for (uint32_t attempt = 0; attempt < 4 && cache.UnregisterEpoch() != epoch; ++attempt) {
+	// A buffer lookup while rebinding another descriptor can join and unregister a
+	// previously resolved buffer. Repeat until the epoch is stable; never publish stale handles.
+	for (uint32_t attempt = 0; cache.UnregisterEpoch() != epoch; ++attempt) {
+		if (attempt == 32u) {
+			EXIT("graphics descriptor buffers did not stabilize after 32 rebind attempts "
+			     "(VS 0x%016llx, unregister epoch %llu)\n",
+			     static_cast<unsigned long long>(bindings.vertex.runtime->program->shader_hash),
+			     static_cast<unsigned long long>(cache.UnregisterEpoch()));
+		}
 		static std::atomic<uint32_t> reports {0};
 		if (reports.fetch_add(1, std::memory_order_relaxed) < 16)
 			std::printf("Bindings: a buffer was unregistered while a draw's bindings were made (VS 0x%016llx), resolved again\n",
