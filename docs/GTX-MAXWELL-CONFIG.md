@@ -11,10 +11,13 @@ The local `launch.json` is read by `run-windows.ps1` on each launch. It enables 
 | `KYTY_VULKAN_RECORDING` | `0` | Bypass the local Vulkan command-recording worker implicated by the previous Aftermath call stack |
 | `KYTY_DEFERRED_SUBMIT` | `0` | Do not defer queue submission through that recording path |
 | `KYTY_SPECULATE` | `0` | Disable speculative command-buffer recording/passive worker segments |
+| `KYTY_TABLE_DISPATCH` | `0` | Bypass the optimized compute table-dispatch path (`cs-table` pipelines) implicated by the latest submission history |
+| `KYTY_TABLE_XPR` | `0` | Bypass the optimized table-draw path |
+| `KYTY_SCOUT` | `0` | Disable the background scout worker used by the table paths |
 | `KYTY_GPU_CHECKPOINTS` | `1` | Request NVIDIA Vulkan diagnostic checkpoints |
 | `KYTY_FAULT_BINDINGS` | `1` | Request GPU address-binding history when the installed driver exposes the extension |
 
-This is a **diagnostic isolation profile**, not a performance profile and not proof that the fault is fixed. Disabling recording and speculation may reduce performance. The address-binding extension may not be exposed by NVIDIA driver 582.78; in that case the emulator should report that the feature is unavailable and continue without it.
+This is a **diagnostic isolation profile**, not a performance profile and not proof that the fault is fixed. Disabling recording, speculation and the table paths may reduce performance. The address-binding extension may not be exposed by NVIDIA driver 582.78; in that case the emulator should report that the feature is unavailable and continue without it.
 
 The profile deliberately leaves the compute-chain safe mode unchanged so that this build isolates the recording/speculation path first.
 
