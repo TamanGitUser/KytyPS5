@@ -1299,33 +1299,31 @@ static void LogDrawStateIfNeeded(const CommandBuffer& buffer, const DrawCallInfo
 	                  draw.index_count, index_addr);
 }
 
-// GTX (Maxwell) investigation: a bounded metadata-only snapshot for the known failing Demon’s Souls draw.
+// GTX (Maxwell) investigation: bounded metadata-only snapshots for draws using the known failing vertex shader.
 // It deliberately does not dereference guest vertex/index memory; the generic debug logger has separate raw-data paths.
 static void LogMaxwellDiagnosticDrawSnapshot(
     const CommandBuffer& buffer, const DrawCallInfo& draw, const DrawRenderState& state,
     vk::PrimitiveTopology topology, const DrawEmitInfo& emit, const DrawIndexBufferSource& index_source,
     const PreparedBindings& vertex, const std::optional<PreparedBindings>& pixel) {
 	static constexpr uint64_t VertexShaderHash = 0x3ec043bd86013cafull;
-	static constexpr std::array<uint64_t, 3> PixelShaderHashes {
-		0x34b6723f08bf49afull, 0x6af47a4d2a1fb7daull, 0x4482de1b0cab7c19ull};
 	const auto* vs = state.vs_input_info.stage.program;
 	const auto* ps = state.ps_active ? state.ps_input_info.stage.program : nullptr;
-	if (vs == nullptr || ps == nullptr || vs->shader_hash != VertexShaderHash ||
-	    std::ranges::find(PixelShaderHashes, ps->shader_hash) == PixelShaderHashes.end()) {
-		return;
-	}
+	// The failing draw can pair this vertex shader with more pixel-shader variants than the first three
+	// observed in submission breadcrumbs. Filter only by VS so an unanticipated PS is not missed.
+	if (vs == nullptr || vs->shader_hash != VertexShaderHash) return;
 
 	const auto log_id = g_maxwell_draw_snapshot_count.fetch_add(1, std::memory_order_relaxed);
 	if (log_id >= 8) return;
 
 	const auto& ucfg = buffer.GetUserConfig();
 	LOGF("GPU diagnostic DrawSnapshot[%u]: frame=%llu draw=%s VS=0x%016" PRIx64
-	     " PS=0x%016" PRIx64 " indexed=%s count=%u instances=%u primitive=%u topology=%u "
+	     " PS_active=%s PS=0x%016" PRIx64 " indexed=%s count=%u instances=%u primitive=%u topology=%u "
 	     "index_addr=0x%016" PRIx64 " index_size=0x%016" PRIx64 " index_type=%u guest_index_bytes=%u "
 	     "vertex_offset=%d first_vertex=%u first_instance=%u indirect_args=0x%016" PRIx64
 	     " indirect_count=%u indirect_stride=%u\n",
 	     log_id, static_cast<unsigned long long>(buffer.GetContext().FrameNumber()), draw.name,
-	     vs->shader_hash, ps->shader_hash, emit.indexed ? "true" : "false", draw.index_count,
+	     vs->shader_hash, state.ps_active ? "true" : "false", ps != nullptr ? ps->shader_hash : 0ull,
+	     emit.indexed ? "true" : "false", draw.index_count,
 	     draw.instance_count, static_cast<uint32_t>(ucfg.GetPrimType()), static_cast<uint32_t>(topology),
 	     index_source.address, index_source.size, static_cast<uint32_t>(index_source.type),
 	     index_source.guest_element_size, emit.vertex_offset, emit.first_vertex, emit.first_instance,
@@ -1362,17 +1360,44 @@ static void LogMaxwellDiagnosticDrawSnapshot(
 		     log_id, i, vb.addr, vb.stride, vb.num_records, vb.fetch_index, vb.attr_num);
 	}
 
-	const auto log_stage = [log_id](const char* stage, const PreparedBindings& bindings) {
-		LOGF("GPU diagnostic DrawSnapshot[%u]: %s descriptor buffers=%zu guest buffer sources=%zu images=%zu samplers=%zu\n",
-		     log_id, stage, bindings.buffers.size(), bindings.buffer_sources.size(),
-		     bindings.images.size(), bindings.samplers.size());
-		for (size_t i = 0; i < bindings.buffer_sources.size(); ++i) {
-			const auto& source = bindings.buffer_sources[i];
+	const auto log_stage = [log_id](const char* stage, const PreparedBindings& prepared) {
+		const auto& runtime = *prepared.runtime;
+		const auto& shader = *runtime.program;
+		const auto& resources = runtime.resources;
+		LOGF("GPU diagnostic DrawSnapshot[%u]: %s descriptor buffers=%zu guest buffer sources=%zu images=%zu samplers=%zu "
+		     "uses_dma=%s bda_plan_complete=%s bda_spans=%zu user_data=%zu flattened_srt=%zu\n",
+		     log_id, stage, prepared.buffers.size(), prepared.buffer_sources.size(),
+		     prepared.images.size(), prepared.samplers.size(), shader.info.uses_dma ? "true" : "false",
+		     shader.bda_read_plan.complete ? "true" : "false", shader.bda_read_plan.spans.size(),
+		     resources.user_data.size(), resources.flattened_srt.size());
+		const auto log_words = [&](const char* label, const auto& words) {
+			for (size_t offset = 0; offset < words.size(); offset += 4) {
+				const auto word = [&](size_t i) { return offset + i < words.size() ? words[offset + i] : 0u; };
+				LOGF("GPU diagnostic DrawSnapshot[%u]: %s %s[%zu..%zu]=%08x %08x %08x %08x\n",
+				     log_id, stage, label, offset, std::min(offset + 3, words.size() - 1),
+				     word(0), word(1), word(2), word(3));
+			}
+		};
+		log_words("user_data", resources.user_data);
+		log_words("flattened_srt", resources.flattened_srt);
+		std::vector<GuestRange> bda_ranges;
+		const bool bda_evaluated = ShaderRecompiler::IR::EvaluateBdaReadPlan(
+		    shader.bda_read_plan, resources, bda_ranges);
+		LOGF("GPU diagnostic DrawSnapshot[%u]: %s BDA evaluation=%s ranges=%zu\n",
+		     log_id, stage, bda_evaluated ? "success" : "failed", bda_ranges.size());
+		for (size_t i = 0; i < bda_ranges.size(); ++i) {
+			const auto& range = bda_ranges[i];
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s BDA[%zu] guest_addr=0x%016" PRIx64
+			     " guest_size=0x%016" PRIx64 " valid=%s\n",
+			     log_id, stage, i, range.address, range.size, range.Valid() ? "true" : "false");
+		}
+		for (size_t i = 0; i < prepared.buffer_sources.size(); ++i) {
+			const auto& source = prepared.buffer_sources[i];
 			LOGF("GPU diagnostic DrawSnapshot[%u]: %s buffer[%zu] guest_addr=0x%016" PRIx64
 			     " size=0x%016" PRIx64 "\n", log_id, stage, i, source.address, source.size);
 		}
-		for (size_t i = 0; i < bindings.images.size(); ++i) {
-			const auto& image = bindings.images[i];
+		for (size_t i = 0; i < prepared.images.size(); ++i) {
+			const auto& image = prepared.images[i];
 			const auto& info = image.desc.info;
 			LOGF("GPU diagnostic DrawSnapshot[%u]: %s image[%zu] guest_addr=0x%016" PRIx64
 			     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s layout=%s\n",
