@@ -122,7 +122,10 @@ jobs:
           if (Test-Path -LiteralPath $map) { Copy-Item $map $out }
           Copy-Item LICENSES $out -Recurse
           Copy-Item run-windows.json "$out\launch.json"
+          # All launch and game-location settings travel with the portable folder.
+          Copy-Item launcher-settings.json, game-path.txt $out
           Copy-Item docs\PORTABLE-README.md "$out\README.md"
+          Copy-Item docs\GTX-MAXWELL-CONFIG.md "$out\GTX-MAXWELL-CONFIG.md"
           # The render-pass states the precompile program makes the seed file with: the first launch lists the
           # game's shaders from its files (kyty_shader_precompile --make-seeds; a release cannot hold that list: it
           # contains the game's shader code). The Python tools that made it before are not needed. With them, each
@@ -157,7 +160,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.name.outputs.package }}
-          path: _Build/package/
+          # Flatten the package folder: extracting the artifact into D:\emu\alt puts the EXE at its root. 
+          path: _Build/package/${{ steps.name.outputs.package }}/*
           if-no-files-found: error
 
   release:

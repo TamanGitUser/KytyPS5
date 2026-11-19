@@ -1,5 +1,11 @@
 {
-  "environment": {},
+  "environment": {
+    "KYTY_VULKAN_RECORDING": "0",
+    "KYTY_DEFERRED_SUBMIT": "0",
+    "KYTY_SPECULATE": "0",
+    "KYTY_GPU_CHECKPOINTS": "1",
+    "KYTY_FAULT_BINDINGS": "1"
+  },
   "command": [
     "--",
     "kyty_emulator.exe",
