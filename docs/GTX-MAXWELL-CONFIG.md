@@ -19,7 +19,7 @@ The local `launch.json` is read by `run-windows.ps1` on each launch. It enables 
 
 This is a **diagnostic isolation profile**, not a performance profile and not proof that the fault is fixed. Disabling recording, speculation and the table paths may reduce performance. The address-binding extension may not be exposed by NVIDIA driver 582.78; in that case the emulator should report that the feature is unavailable and continue without it.
 
-The profile deliberately leaves the compute-chain safe mode unchanged so that this build isolates the recording/speculation path first.
+The profile deliberately leaves compute-chain behavior unchanged. The renderer also has a bounded graphics-draw diagnostic for vertex shader `3ec043bd86013caf`: it records up to eight matching draws, including the actual pixel shader, target and texture ranges, user data, flattened SRT words, and evaluated BDA read ranges. This helps correlate a graphics-side GPU fault with the guest addresses supplied to the draw; it is diagnostic logging only and does not change rendering behavior.
 
 ## Files and paths
 
