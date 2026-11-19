@@ -24,7 +24,7 @@
     "--shader-log-direction",
     "Silent",
     "--printf-direction",
-    "Silent",
+    "Console",
     "--vblank-frequency",
     "60",
     "--present-mode",
