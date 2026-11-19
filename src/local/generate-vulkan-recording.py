@@ -93,11 +93,11 @@ def generate(registry, header):
         # but need no result: queue them instead of draining.
         ok = (name.startswith('vkCmd') or name in ORDERED_HOST_CALLS) and ret == 'void'
         # GTX (Maxwell) investigation: Aftermath resolves the device-loss worker callback to
-        # vkCmdCopyBufferToImage. Keep this transfer synchronous: BeforeDirect below drains
-        # earlier recorded commands before calling the driver on the producer thread.
+        # vkCmdCopyBufferToImage. Keep this transfer synchronous on the normal producer: drain
+        # earlier commands, then call the driver on that producer thread. Passive speculative
+        # segments still record it so their placeholder command buffer is resolved on splice.
         # This is a conservative workaround for the observed driver path, not proof that the
         # copied regions or the GPU fault originate in this command.
-        if name == 'vkCmdCopyBufferToImage': ok = False
         # A host allocator cannot be copied; the renderer never passes one. Such a call is
         # queued only without it (vkDestroyImageView drained the stream five times a frame).
         allocator = False
@@ -142,6 +142,13 @@ def generate(registry, header):
             declarations.append('    if (LiveCensus::g_on.load(std::memory_order_relaxed) && LiveCensus::g_render) '
                                 'LiveCensus::Add(LiveCensus::Barrier, reinterpret_cast<uint64_t>(__builtin_return_address(0)), '
                                 f'{1 if "2" in name else 0} | LiveCensus::g_queue, 0);')
+        if name == 'vkCmdCopyBufferToImage':
+            declarations.append('    if (!t_passive) {')
+            declarations.append('        BeforeDirect();')
+            declarations.append(f'        original.{name}({", ".join(pnames)});')
+            if mark: declarations.append(f'        {mark}')
+            declarations.append('        return;')
+            declarations.append('    }')
         if ok:
             deferred.append(name)
             # A passive producer (a speculation thread's worker packets) records commands only: its host calls
