@@ -1373,10 +1373,11 @@ static void LogMaxwellDiagnosticDrawSnapshot(
 
 		for (size_t i = 0; i < shader.info.inputs.size(); ++i) {
 			const auto& input = shader.info.inputs[i];
-			LOGF("GPU diagnostic DrawSnapshot[%u]: %s input[%zu] kind=%u location=%u components=%u per_vertex=%s\\n",
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s input[%zu] kind=%u location=%u components=%u per_vertex=%s\n",
 			     log_id, stage, i, static_cast<uint32_t>(input.kind), input.location,
 			     input.component_count, input.per_vertex ? "true" : "false");
-		}		const auto log_words = [&](const char* label, const auto& words) {
+		}
+		const auto log_words = [&](const char* label, const auto& words) {
 			for (size_t offset = 0; offset < words.size(); offset += 4) {
 				const auto word = [&](size_t i) { return offset + i < words.size() ? words[offset + i] : 0u; };
 				LOGF("GPU diagnostic DrawSnapshot[%u]: %s %s[%zu..%zu]=%08x %08x %08x %08x\n",
@@ -1413,7 +1414,7 @@ static void LogMaxwellDiagnosticDrawSnapshot(
 		for (size_t i = 0; i < prepared.images.size(); ++i) {
 			const auto& resource = shader.info.images[i];
 			LOGF("GPU diagnostic DrawSnapshot[%u]: %s image_resource[%zu] class=%u read=%s written=%s "
-			     "atomic=%s depth_compare=%s dimension=%u mip_mode=%u source=%u pc=0x%08x\\n",
+			     "atomic=%s depth_compare=%s dimension=%u mip_mode=%u source=%u pc=0x%08x\n",
 			     log_id, stage, i, static_cast<uint32_t>(resource.resource_class),
 			     resource.read ? "true" : "false", resource.written ? "true" : "false",
 			     resource.atomic ? "true" : "false", resource.depth_compare ? "true" : "false",
