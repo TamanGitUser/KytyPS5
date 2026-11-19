@@ -1370,7 +1370,13 @@ static void LogMaxwellDiagnosticDrawSnapshot(
 		     prepared.images.size(), prepared.samplers.size(), shader.info.uses_dma ? "true" : "false",
 		     shader.bda_read_plan.complete ? "true" : "false", shader.bda_read_plan.spans.size(),
 		     resources.user_data.size(), resources.flattened_srt.size());
-		const auto log_words = [&](const char* label, const auto& words) {
+
+		for (size_t i = 0; i < shader.info.inputs.size(); ++i) {
+			const auto& input = shader.info.inputs[i];
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s input[%zu] kind=%u location=%u components=%u per_vertex=%s\\n",
+			     log_id, stage, i, static_cast<uint32_t>(input.kind), input.location,
+			     input.component_count, input.per_vertex ? "true" : "false");
+		}		const auto log_words = [&](const char* label, const auto& words) {
 			for (size_t offset = 0; offset < words.size(); offset += 4) {
 				const auto word = [&](size_t i) { return offset + i < words.size() ? words[offset + i] : 0u; };
 				LOGF("GPU diagnostic DrawSnapshot[%u]: %s %s[%zu..%zu]=%08x %08x %08x %08x\n",
@@ -1403,6 +1409,16 @@ static void LogMaxwellDiagnosticDrawSnapshot(
 			     " guest_size=0x%016" PRIx64 " extent=%ux%u format=%s layout=%s\n",
 			     log_id, stage, i, info.data.address, info.data.size, info.extent.width, info.extent.height,
 			     vk::to_string(image.desc.view_info.format).c_str(), vk::to_string(image.layout).c_str());
+		}
+		for (size_t i = 0; i < prepared.images.size(); ++i) {
+			const auto& resource = shader.info.images[i];
+			LOGF("GPU diagnostic DrawSnapshot[%u]: %s image_resource[%zu] class=%u read=%s written=%s "
+			     "atomic=%s depth_compare=%s dimension=%u mip_mode=%u source=%u pc=0x%08x\\n",
+			     log_id, stage, i, static_cast<uint32_t>(resource.resource_class),
+			     resource.read ? "true" : "false", resource.written ? "true" : "false",
+			     resource.atomic ? "true" : "false", resource.depth_compare ? "true" : "false",
+			     static_cast<uint32_t>(resource.dimension), static_cast<uint32_t>(resource.mip_mode),
+			     resource.source, resource.first_use_pc);
 		}
 	};
 	log_stage("VS", vertex);
@@ -1658,7 +1674,15 @@ bool RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, CommandBuffer& buff
 	// (The vertex, index and argument buffers and the targets' refreshes can join a buffer resolved before them into a new
 	// one, which then no longer owns its bytes: the bindings and these buffers resolved again until nothing was
 	// unregistered meanwhile, as PrepareGraphicsBindingsInto.)
-	for (uint32_t attempt = 0; attempt < 4 && buffer_cache.UnregisterEpoch() != unregistered; ++attempt) {
+	// Re-resolve every binding after a buffer join. Never submit a draw with handles
+	// that refer to buffers whose bytes were moved by a later join in this preparation.
+	for (uint32_t attempt = 0; buffer_cache.UnregisterEpoch() != unregistered; ++attempt) {
+		if (attempt == 32u) {
+			EXIT("draw buffer bindings did not stabilize after 32 rebind attempts "
+			     "(VS 0x%016llx, unregister epoch %llu)\n",
+			     static_cast<unsigned long long>(bindings.vertex.runtime->program->shader_hash),
+			     static_cast<unsigned long long>(buffer_cache.UnregisterEpoch()));
+		}
 		static std::atomic<uint32_t> reports {0};
 		if (reports.fetch_add(1, std::memory_order_relaxed) < 16)
 			std::printf("Bindings: a buffer was unregistered while a draw's buffers and targets were made (VS 0x%016llx), "
