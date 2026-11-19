@@ -92,6 +92,12 @@ def generate(registry, header):
         # Besides vkCmd*, calls that must keep their order relative to recorded commands
         # but need no result: queue them instead of draining.
         ok = (name.startswith('vkCmd') or name in ORDERED_HOST_CALLS) and ret == 'void'
+        # GTX (Maxwell) investigation: Aftermath resolves the device-loss worker callback to
+        # vkCmdCopyBufferToImage. Keep this transfer synchronous: BeforeDirect below drains
+        # earlier recorded commands before calling the driver on the producer thread.
+        # This is a conservative workaround for the observed driver path, not proof that the
+        # copied regions or the GPU fault originate in this command.
+        if name == 'vkCmdCopyBufferToImage': ok = False
         # A host allocator cannot be copied; the renderer never passes one. Such a call is
         # queued only without it (vkDestroyImageView drained the stream five times a frame).
         allocator = False
