@@ -672,7 +672,7 @@ private:
 	BarycentricPerVertexOutputs builtins;
 	std::vector<uint32_t> interfaces;
 	std::vector<uint32_t> source_variables;
-	std::vector<uint32_t> parameter_variables;
+	std::vector<std::array<uint32_t, 3>> parameter_variables;
 	uint32_t main = 0, void_type = 0, uint_type = 0, int_type = 0, float_type = 0;
 	uint32_t vec3_float_type = 0, vec4_float_type = 0, function_type = 0, per_vertex_type = 0;
 	uint32_t gl_in = 0, gl_out = 0, barycentric_output = 0, zero_vec4 = 0;
