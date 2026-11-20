@@ -828,11 +828,17 @@ CompileResult CompileProgram(TranslateResult translated, const CompileOptions& o
 		    return input.per_vertex || input.kind == IR::StageInputKind::BaryCoordSmooth ||
 		           input.kind == IR::StageInputKind::BaryCoordNoPerspective;
 	    });
+	const bool pixel_has_per_vertex_parameters =
+	    std::any_of(ir.info.inputs.begin(), ir.info.inputs.end(), [](const auto& input) {
+		    return input.kind == IR::StageInputKind::Parameter && input.per_vertex;
+	    });
+	const bool amd_barycentrics_available =
+	    (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureAmdBarycentrics) != 0;
 	ir.software_fragment_barycentrics =
 	    options.stage == ShaderType::Pixel && SoftwareFragmentBarycentricsEnabled() &&
-	    pixel_needs_software_barycentrics;
-	ir.amd_barycentrics = !ir.software_fragment_barycentrics &&
-	                      (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureAmdBarycentrics) != 0;
+	    pixel_needs_software_barycentrics &&
+	    (!amd_barycentrics_available || pixel_has_per_vertex_parameters);
+	ir.amd_barycentrics = !ir.software_fragment_barycentrics && amd_barycentrics_available;
 	IR::AllocateBindings(ir, push_data_start_dword, options.enable_lod_stats,
 	                     options.table_mode && options.table_dead_user_data);
 	DumpShaderIr(options, ir);
