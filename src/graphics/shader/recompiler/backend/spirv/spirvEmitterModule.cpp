@@ -543,7 +543,7 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 		    state.program.software_fragment_barycentrics) {
 			const auto location = PixelParameterLocation(state, input.location);
 			for (uint32_t vertex = 0; vertex < 3u; vertex++) {
-				const auto name = fmt::format("{}_vertex_{}", input.debug_name, vertex);
+				const auto name = input.debug_name + "_vertex_" + std::to_string(vertex);
 				const auto variable = input.per_vertex_variable_ids[vertex];
 				state.builder.AddName(variable, name.c_str());
 				state.builder.AddAnnotation({OpDecorate, variable, DecorationFlat});
