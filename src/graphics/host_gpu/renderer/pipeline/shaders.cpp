@@ -1123,7 +1123,7 @@ void CreatePipelineInternal(
 		    static_params.topology == vk::PrimitiveTopology::eTriangleFan;
 		EXIT_NOT_IMPLEMENTED(!triangle_topology);
 		geometry_shader_spirv =
-		    BuildFragmentBarycentricGeometryShader(vs_input_info, *ps_input_info);
+		    BuildFragmentBarycentricGeometryShader(vs_input_info, *ps_input_info, rect_list);
 		EXIT_NOT_IMPLEMENTED(geometry_shader_spirv.empty());
 
 		const auto& limits = graphics.GetPhysicalDeviceProperties().limits;
@@ -1131,20 +1131,22 @@ void CreatePipelineInternal(
 		uint32_t geometry_input_components = 4u;
 		uint32_t geometry_output_components = 7u; // Position and the three interpolated barycentric weights.
 		uint32_t geometry_builtin_components = 0u;
-		for (const auto& output: vs_input_info.stage.program->info.outputs) {
-			switch (output.kind) {
-				case ShaderRecompiler::IR::StageOutputKind::PointSize:
-					geometry_builtin_components = std::max(geometry_builtin_components, 1u);
-					break;
-				case ShaderRecompiler::IR::StageOutputKind::ClipDistance:
-				case ShaderRecompiler::IR::StageOutputKind::CullDistance:
-					geometry_builtin_components += 1u;
-					break;
-				case ShaderRecompiler::IR::StageOutputKind::Layer:
-				case ShaderRecompiler::IR::StageOutputKind::ViewportIndex:
-					geometry_builtin_components += 1u;
-					break;
-				default: break;
+		if (!rect_list) {
+			for (const auto& output: vs_input_info.stage.program->info.outputs) {
+				switch (output.kind) {
+					case ShaderRecompiler::IR::StageOutputKind::PointSize:
+						geometry_builtin_components = std::max(geometry_builtin_components, 1u);
+						break;
+					case ShaderRecompiler::IR::StageOutputKind::ClipDistance:
+					case ShaderRecompiler::IR::StageOutputKind::CullDistance:
+						geometry_builtin_components += 1u;
+						break;
+					case ShaderRecompiler::IR::StageOutputKind::Layer:
+					case ShaderRecompiler::IR::StageOutputKind::ViewportIndex:
+						geometry_builtin_components += 1u;
+						break;
+					default: break;
+				}
 			}
 		}
 		geometry_input_components += geometry_builtin_components;

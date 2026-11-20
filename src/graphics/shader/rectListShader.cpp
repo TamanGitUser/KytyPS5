@@ -418,13 +418,11 @@ public:
 		ptr_output_vec4 = Pointer(spv::StorageClass::Output, vec4_float_type);
 		ptr_input_float = Pointer(spv::StorageClass::Input, float_type);
 		ptr_output_float = Pointer(spv::StorageClass::Output, float_type);
-		ptr_input_int   = Pointer(spv::StorageClass::Input, int_type);
-		ptr_output_int  = Pointer(spv::StorageClass::Output, int_type);
+		ptr_input_int   = Pointer(spv::StorageClass::Input, uint_type);
 
-		gl_in = AddInterface(spv::StorageClass::Input,
-		                     Array(per_vertex_type, 3u));
-		gl_out = AddInterface(spv::StorageClass::Output,
-		                      Array(per_vertex_type, 3u));
+		gl_in = AddInterface(spv::StorageClass::Input, Array(per_vertex_type, 3u));
+		gl_out = AddInterface(spv::StorageClass::Output, per_vertex_type);
+		DefineBuiltInInterfaces();
 
 		DefineParameterInterfaces();
 		DefineBarycentricInterface();
@@ -481,43 +479,49 @@ private:
 	}
 
 	void DefinePerVertexBlock() {
-		std::vector<uint32_t> members {vec4_float_type};
-		position_member = 0;
-		const auto add_member = [&](uint32_t type, spv::BuiltIn builtin, uint32_t& index) {
-			index = static_cast<uint32_t>(members.size());
-			members.push_back(type);
-			per_vertex_member_builtins.push_back({index, Word(builtin)});
+		per_vertex_type = builder.DecoratedType(
+		    Word(spv::Op::OpTypeStruct), {vec4_float_type},
+		    {{Word(spv::Op::OpMemberDecorate),
+		      {0u, Word(spv::Decoration::BuiltIn), Word(spv::BuiltIn::Position)}},
+		     {Word(spv::Op::OpDecorate), {Word(spv::Decoration::Block)}}});
+	}
+
+	void DefineBuiltInInterfaces() {
+		const auto define = [&](uint32_t& input, uint32_t& output, spv::BuiltIn builtin,
+		                        uint32_t input_type, uint32_t output_type) {
+			input = AddInterface(spv::StorageClass::Input, input_type);
+			output = AddInterface(spv::StorageClass::Output, output_type);
+			Decorate(input, spv::Decoration::BuiltIn, Word(builtin));
+			Decorate(output, spv::Decoration::BuiltIn, Word(builtin));
 		};
-		if (builtins.point_size) add_member(float_type, spv::BuiltIn::PointSize, point_size_member);
-		if (builtins.clip_distance_count != 0) {
-			add_member(Array(float_type, builtins.clip_distance_count),
-			           spv::BuiltIn::ClipDistance, clip_distance_member);
-		}
-		if (builtins.cull_distance_count != 0) {
-			add_member(Array(float_type, builtins.cull_distance_count),
-			           spv::BuiltIn::CullDistance, cull_distance_member);
-		}
-		if (builtins.layer) add_member(int_type, spv::BuiltIn::Layer, layer_member);
-		if (builtins.viewport_index) {
-			add_member(int_type, spv::BuiltIn::ViewportIndex, viewport_index_member);
-		}
-		per_vertex_type = builder.Type(Word(spv::Op::OpTypeStruct), members);
-		builder.AddAnnotation({Word(spv::Op::OpDecorate), per_vertex_type,
-		                       Word(spv::Decoration::Block)});
-		builder.AddAnnotation({Word(spv::Op::OpMemberDecorate), per_vertex_type, 0u,
-		                       Word(spv::Decoration::BuiltIn), Word(spv::BuiltIn::Position)});
-		for (const auto [member, builtin]: per_vertex_member_builtins) {
-			builder.AddAnnotation({Word(spv::Op::OpMemberDecorate), per_vertex_type, member,
-			                       Word(spv::Decoration::BuiltIn), builtin});
+		if (builtins.point_size) {
+			define(point_size_input, point_size_output, spv::BuiltIn::PointSize,
+			       Array(float_type, 3u), float_type);
 		}
 		if (builtins.clip_distance_count != 0) {
+			define(clip_distance_input, clip_distance_output, spv::BuiltIn::ClipDistance,
+			       Array(Array(float_type, builtins.clip_distance_count), 3u),
+			       Array(float_type, builtins.clip_distance_count));
 			builder.RequireCapability(Word(spv::Capability::ClipDistance));
 		}
 		if (builtins.cull_distance_count != 0) {
+			define(cull_distance_input, cull_distance_output, spv::BuiltIn::CullDistance,
+			       Array(Array(float_type, builtins.cull_distance_count), 3u),
+			       Array(float_type, builtins.cull_distance_count));
 			builder.RequireCapability(Word(spv::Capability::CullDistance));
 		}
-		if (builtins.layer) builder.RequireCapability(Word(spv::Capability::ShaderLayer));
-		if (builtins.viewport_index) builder.RequireCapability(Word(spv::Capability::ShaderViewportIndex));
+		if (builtins.layer) {
+			define(layer_input, layer_output, spv::BuiltIn::Layer,
+			       Array(uint_type, 3u), uint_type);
+			builder.RequireVersion(SpirvVersion15);
+			builder.RequireCapability(Word(spv::Capability::ShaderLayer));
+		}
+		if (builtins.viewport_index) {
+			define(viewport_index_input, viewport_index_output, spv::BuiltIn::ViewportIndex,
+			       Array(uint_type, 3u), uint_type);
+			builder.RequireVersion(SpirvVersion15);
+			builder.RequireCapability(Word(spv::Capability::ShaderViewportIndex));
+		}
 	}
 
 	void DefineParameterInterfaces() {
@@ -584,26 +588,26 @@ private:
 		return Load(vec4_float_type, pointer);
 	}
 
-	void StorePerVertexPosition(uint32_t vertex, uint32_t value) {
-		Store(Access(ptr_output_vec4, gl_out, Int(vertex), Int(position_member)), value);
+	void StorePerVertexPosition(uint32_t value) {
+		Store(Access(ptr_output_vec4, gl_out, Int(position_member)), value);
 	}
 
-	void CopyPerVertexFloat(uint32_t vertex, uint32_t member, uint32_t component_count) {
+	void CopyPerVertexFloat(uint32_t vertex, uint32_t input, uint32_t output,
+	                         uint32_t component_count) {
 		for (uint32_t component = 0; component < component_count; component++) {
-			const auto value = Load(float_type,
-			    Access(ptr_input_float, gl_in, Int(vertex), Int(member), Int(component)));
-			Store(Access(ptr_output_float, gl_out, Int(vertex), Int(member), Int(component)), value);
+			const auto value = Load(float_type, Access(ptr_input_float, input, Int(vertex), Int(component)));
+			Store(Access(ptr_output_float, output, Int(component)), value);
 		}
 	}
 
-	void CopyPerVertexScalar(uint32_t vertex, uint32_t member) {
-		const auto value = Load(float_type, Access(ptr_input_float, gl_in, Int(vertex), Int(member)));
-		Store(Access(ptr_output_float, gl_out, Int(vertex), Int(member)), value);
+	void CopyPerVertexScalar(uint32_t vertex) {
+		const auto value = Load(float_type, Access(ptr_input_float, point_size_input, Int(vertex)));
+		Store(point_size_output, value);
 	}
 
-	void CopyPerVertexInteger(uint32_t vertex, uint32_t member) {
-		const auto value = Load(int_type, Access(ptr_input_int, gl_in, Int(vertex), Int(member)));
-		Store(Access(ptr_output_int, gl_out, Int(vertex), Int(member)), value);
+	void CopyPerVertexInteger(uint32_t vertex, uint32_t input, uint32_t output) {
+		const auto value = Load(uint_type, Access(ptr_input_int, input, Int(vertex)));
+		Store(output, value);
 	}
 
 	uint32_t SourceVariable(uint32_t location) const {
@@ -619,16 +623,20 @@ private:
 		const auto label = builder.AllocateId();
 		builder.AddFunction({Word(spv::Op::OpLabel), label});
 		for (uint32_t vertex = 0; vertex < 3; vertex++) {
-			StorePerVertexPosition(vertex, LoadPerVertexPosition(vertex));
-			if (builtins.point_size) CopyPerVertexScalar(vertex, point_size_member);
+			StorePerVertexPosition(LoadPerVertexPosition(vertex));
+			if (builtins.point_size) CopyPerVertexScalar(vertex);
 			if (builtins.clip_distance_count != 0) {
-				CopyPerVertexFloat(vertex, clip_distance_member, builtins.clip_distance_count);
+				CopyPerVertexFloat(vertex, clip_distance_input, clip_distance_output,
+				                   builtins.clip_distance_count);
 			}
 			if (builtins.cull_distance_count != 0) {
-				CopyPerVertexFloat(vertex, cull_distance_member, builtins.cull_distance_count);
+				CopyPerVertexFloat(vertex, cull_distance_input, cull_distance_output,
+				                   builtins.cull_distance_count);
 			}
-			if (builtins.layer) CopyPerVertexInteger(vertex, layer_member);
-			if (builtins.viewport_index) CopyPerVertexInteger(vertex, viewport_index_member);
+			if (builtins.layer) CopyPerVertexInteger(vertex, layer_input, layer_output);
+			if (builtins.viewport_index) {
+				CopyPerVertexInteger(vertex, viewport_index_input, viewport_index_output);
+			}
 
 			for (size_t p = 0; p < parameters.size(); p++) {
 				const auto& parameter = parameters[p];
@@ -664,21 +672,25 @@ private:
 	std::vector<uint32_t> interfaces;
 	std::vector<uint32_t> source_variables;
 	std::vector<uint32_t> parameter_variables;
-	std::vector<std::pair<uint32_t, uint32_t>> per_vertex_member_builtins;
 	uint32_t main = 0, void_type = 0, uint_type = 0, int_type = 0, float_type = 0;
 	uint32_t vec3_float_type = 0, vec4_float_type = 0, function_type = 0, per_vertex_type = 0;
 	uint32_t gl_in = 0, gl_out = 0, barycentric_output = 0, zero_vec4 = 0;
+	uint32_t position_member = 0;
 	uint32_t ptr_input_vec4 = 0, ptr_output_vec4 = 0, ptr_input_float = 0, ptr_output_float = 0;
-	uint32_t ptr_input_int = 0, ptr_output_int = 0;
-	uint32_t position_member = 0, point_size_member = 0, clip_distance_member = 0;
-	uint32_t cull_distance_member = 0, layer_member = 0, viewport_index_member = 0;
+	uint32_t ptr_input_int = 0;
+	uint32_t point_size_input = 0, point_size_output = 0;
+	uint32_t clip_distance_input = 0, clip_distance_output = 0;
+	uint32_t cull_distance_input = 0, cull_distance_output = 0;
+	uint32_t layer_input = 0, layer_output = 0;
+	uint32_t viewport_index_input = 0, viewport_index_output = 0;
 	std::array<uint32_t, 3> barycentric_basis {};
 };
 
 } // namespace
 
 std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
-    const ShaderVertexInputInfo& vertex_info, const ShaderPixelInputInfo& pixel_info) {
+    const ShaderVertexInputInfo& vertex_info, const ShaderPixelInputInfo& pixel_info,
+    bool rect_list) {
 	if (!vertex_info.stage || !pixel_info.stage ||
 	    vertex_info.stage.program->stage == ShaderType::Mesh) {
 		return {};
@@ -694,16 +706,26 @@ std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
 	});
 	if (barycentric == pixel_inputs.end() && !has_per_vertex_parameters) return {};
 
+	std::vector<uint32_t> active_inputs;
+	for (const auto& input: pixel_inputs) {
+		if (input.kind == ShaderRecompiler::IR::StageInputKind::Parameter) {
+			active_inputs.push_back(input.location);
+		}
+	}
 	std::vector<BarycentricSourceParameter> sources;
 	std::vector<BarycentricParameter> parameters;
 	uint32_t software_location = 0;
 	for (const auto& input: pixel_inputs) {
 		if (input.kind != ShaderRecompiler::IR::StageInputKind::Parameter) continue;
-		const auto source_location = ShaderPixelParameterMappedLocation(pixel_info, input.location);
+		const auto vertex_source_location =
+		    ShaderPixelParameterMappedLocation(pixel_info, input.location);
+		const auto source_location =
+		    rect_list ? ShaderPixelParameterLocation(pixel_info, active_inputs, input.location)
+		              : vertex_source_location;
 		const auto source_exists = std::any_of(vertex_outputs.begin(), vertex_outputs.end(),
-		    [source_location](const auto& output) {
+		    [vertex_source_location](const auto& output) {
 			    return output.kind == ShaderRecompiler::IR::StageOutputKind::Parameter &&
-			           output.index == source_location;
+			           output.index == vertex_source_location;
 		    });
 		if (source_exists && std::none_of(sources.begin(), sources.end(), [source_location](const auto& source) {
 			    return source.location == source_location;
@@ -722,7 +744,7 @@ std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
 	}
 
 	BarycentricPerVertexOutputs builtins;
-	for (const auto& output: vertex_outputs) {
+	if (!rect_list) for (const auto& output: vertex_outputs) {
 		switch (output.kind) {
 			case ShaderRecompiler::IR::StageOutputKind::PointSize:
 				builtins.point_size = true;

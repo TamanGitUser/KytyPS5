@@ -823,8 +823,16 @@ CompileResult CompileProgram(TranslateResult translated, const CompileOptions& o
 	ir.bda_group_walks = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureBdaGroupWalks) != 0;
 	ir.pixel_quad_reads = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeaturePixelQuadReads) != 0;
 	ir.unfused_mad = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureUnfusedMad) != 0;
-	ir.amd_barycentrics = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureAmdBarycentrics) != 0;
-	ir.software_fragment_barycentrics = options.stage == ShaderType::Pixel && SoftwareFragmentBarycentricsEnabled();
+	const bool pixel_needs_software_barycentrics =
+	    std::any_of(ir.info.inputs.begin(), ir.info.inputs.end(), [](const auto& input) {
+		    return input.per_vertex || input.kind == IR::StageInputKind::BaryCoordSmooth ||
+		           input.kind == IR::StageInputKind::BaryCoordNoPerspective;
+	    });
+	ir.software_fragment_barycentrics =
+	    options.stage == ShaderType::Pixel && SoftwareFragmentBarycentricsEnabled() &&
+	    pixel_needs_software_barycentrics;
+	ir.amd_barycentrics = !ir.software_fragment_barycentrics &&
+	                      (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureAmdBarycentrics) != 0;
 	IR::AllocateBindings(ir, push_data_start_dword, options.enable_lod_stats,
 	                     options.table_mode && options.table_dead_user_data);
 	DumpShaderIr(options, ir);
