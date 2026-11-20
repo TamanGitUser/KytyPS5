@@ -624,6 +624,21 @@ private:
 		                     Word(spv::FunctionControlMask::MaskNone), function_type});
 		const auto label = builder.AllocateId();
 		builder.AddFunction({Word(spv::Op::OpLabel), label});
+		// Geometry input values remain valid for the whole primitive invocation. OpEmitVertex makes output
+		// interface values undefined, but does not invalidate input values or SSA temporaries. Per-vertex
+		// fragment parameters are forwarded as three flat outputs, identical for each emitted vertex, so
+		// load their three source values once and reuse them for all three emissions.
+		std::vector<std::array<uint32_t, 3>> per_vertex_values(parameters.size());
+		for (size_t p = 0; p < parameters.size(); p++) {
+			if (!parameters[p].per_vertex) continue;
+			const auto source = SourceVariable(parameters[p].source_location);
+			for (uint32_t source_vertex = 0; source_vertex < 3; source_vertex++) {
+				per_vertex_values[p][source_vertex] = source != 0
+				    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(source_vertex)))
+				    : zero_vec4;
+			}
+		}
+
 		for (uint32_t vertex = 0; vertex < 3; vertex++) {
 			StorePerVertexPosition(LoadPerVertexPosition(vertex));
 			if (builtins.point_size) CopyPerVertexScalar(vertex);
@@ -642,15 +657,12 @@ private:
 
 			for (size_t p = 0; p < parameters.size(); p++) {
 				const auto& parameter = parameters[p];
-				const auto  source    = SourceVariable(parameter.source_location);
 				if (parameter.per_vertex) {
 					for (uint32_t source_vertex = 0; source_vertex < 3; source_vertex++) {
-						const auto value = source != 0
-						    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(source_vertex)))
-						    : zero_vec4;
-						Store(parameter_variables[p][source_vertex], value);
+						Store(parameter_variables[p][source_vertex], per_vertex_values[p][source_vertex]);
 					}
 				} else {
+					const auto source = SourceVariable(parameter.source_location);
 					const auto value = source != 0
 					    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(vertex)))
 					    : zero_vec4;
