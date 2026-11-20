@@ -1143,14 +1143,18 @@ void CreatePipelineInternal(
 		uint32_t geometry_output_components = 7u; // Position and the three interpolated barycentric weights.
 		uint32_t geometry_builtin_components = 0u;
 		if (!rect_list) {
+			uint32_t clip_distance_components = 0u;
+			uint32_t cull_distance_components = 0u;
 			for (const auto& output: vs_input_info.stage.program->info.outputs) {
 				switch (output.kind) {
 					case ShaderRecompiler::IR::StageOutputKind::PointSize:
 						geometry_builtin_components = std::max(geometry_builtin_components, 1u);
 						break;
 					case ShaderRecompiler::IR::StageOutputKind::ClipDistance:
+						clip_distance_components = std::max(clip_distance_components, output.index + 1u);
+						break;
 					case ShaderRecompiler::IR::StageOutputKind::CullDistance:
-						geometry_builtin_components += 1u;
+						cull_distance_components = std::max(cull_distance_components, output.index + 1u);
 						break;
 					case ShaderRecompiler::IR::StageOutputKind::Layer:
 					case ShaderRecompiler::IR::StageOutputKind::ViewportIndex:
@@ -1159,6 +1163,7 @@ void CreatePipelineInternal(
 					default: break;
 				}
 			}
+			geometry_builtin_components += clip_distance_components + cull_distance_components;
 		}
 		geometry_input_components += geometry_builtin_components;
 		geometry_output_components += geometry_builtin_components;

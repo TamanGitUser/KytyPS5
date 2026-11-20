@@ -10,6 +10,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <string>
 #include <utility>
 
 namespace Libs::Graphics {
