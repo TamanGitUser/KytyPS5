@@ -17,6 +17,7 @@
 #include "graphics/host_gpu/renderer/renderTarget.h"
 #include "graphics/host_gpu/vulkanCommon.h"
 #include "graphics/shader/recompiler/BufferFormat.h"
+#include "graphics/shader/recompiler/frontend/translate/Translate.h"
 #include "graphics/shader/recompiler/ir/ShaderIR.h"
 #include "graphics/shader/rectListShader.h"
 #include "graphics/shader/shader.h"
@@ -1110,8 +1111,18 @@ void CreatePipelineInternal(
 		                                    input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordSmooth ||
 		                                    input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordNoPerspective;
 	                             });
+	const bool pixel_has_per_vertex_parameters =
+	    ps_active && std::any_of(ps_input_info->stage.program->info.inputs.begin(),
+	                             ps_input_info->stage.program->info.inputs.end(), [](const auto& input) {
+		                             return input.kind == ShaderRecompiler::IR::StageInputKind::Parameter &&
+		                                    input.per_vertex;
+	                             });
+	const bool amd_barycentrics_active =
+	    (ShaderRecompiler::Frontend::TranslatorFeatureSet() &
+	     ShaderRecompiler::Frontend::TranslatorFeatureAmdBarycentrics) != 0;
 	const bool software_barycentric_geometry =
-	    graphics.software_fragment_barycentrics && pixel_uses_barycentrics;
+	    graphics.software_fragment_barycentrics && pixel_uses_barycentrics &&
+	    (!amd_barycentrics_active || pixel_has_per_vertex_parameters);
 	vk::ShaderModule geometry_shader_module = nullptr;
 	std::vector<uint32_t> geometry_shader_spirv;
 	vk::PipelineShaderStageCreateInfo geometry_shader_stage_info {};
