@@ -14,10 +14,18 @@ uint32_t PixelParameterLocation(const EmitterState& state, uint32_t attr) {
 			active_inputs[active_count++] = input.location;
 		}
 	}
-	return state.stage == ShaderType::Pixel
-	           ? ShaderPixelParameterLocation(*state.input_info.pixel,
-	                                          {active_inputs.data(), active_count}, attr)
-	           : attr;
+	if (state.stage != ShaderType::Pixel) return attr;
+	if (state.program.software_fragment_barycentrics) {
+		uint32_t software_location = 0;
+		for (const auto& input: state.inputs) {
+			if (input.kind != IR::StageInputKind::Parameter) continue;
+			if (input.location == attr) return software_location;
+			software_location += input.per_vertex ? 3u : 1u;
+		}
+		return software_location;
+	}
+	return ShaderPixelParameterLocation(*state.input_info.pixel,
+	                                    {active_inputs.data(), active_count}, attr);
 }
 
 bool PixelParameterIsFlat(const EmitterState& state, uint32_t attr) {

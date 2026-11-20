@@ -1950,7 +1950,7 @@ struct PipelineCache::ProgramCache {
 		return &source.permutations.back();
 	}
 
-	static constexpr std::size_t MaxStaticKeyWords = 13 + ShaderVertexInputInfo::RES_MAX * 13;
+	static constexpr std::size_t MaxStaticKeyWords = 14 + ShaderVertexInputInfo::RES_MAX * 13;
 
 	Permutation CompilePermutation(const ShaderParams&                          params,
 	                               const ShaderRecompiler::CompileOptions&      options,
@@ -2118,6 +2118,10 @@ struct PipelineCache::ProgramCache {
 		lookup_key.user_data_count = static_cast<uint32_t>(params.user_data.size());
 		lookup_key.code_size       = static_cast<uint32_t>(params.code.size());
 		BuildStageStaticKey(input_info, lookup_key.static_state);
+		if (stage == ShaderType::Pixel) {
+			lookup_key.static_state.push_back(
+			    ShaderRecompiler::SoftwareFragmentBarycentricsEnabled() ? 1u : 0u);
+		}
 		auto                                         entry = programs.find(lookup_key);
 		if (entry != programs.end() && !entry->second.warm_code.empty()) {
 			if (params.code_unread) return UnreadCode();
@@ -2343,6 +2347,8 @@ struct PipelineCache::ProgramCache {
 			stored.program.bindings.AdvancePushData(push_data_cursor);
 			return stored.handle;
 		}
+		const bool software_barycentric_pixel =
+		    stage == ShaderType::Pixel && ShaderRecompiler::SoftwareFragmentBarycentricsEnabled();
 		if (params.code_unread) return UnreadCode(); // (the prefetch's digest, the translation, the warmup record)
 		// A program met for the first time that the prefetch translated: its plan, materialized for
 		// this draw, and its modules are taken over.
@@ -2354,7 +2360,7 @@ struct PipelineCache::ProgramCache {
 					return {};
 				entry = programs.try_emplace(lookup_key, std::move(*group->plan)).first;
 				entry->second.source_digest = group->source;
-				entry->second.prefetched = std::move(group->modules);
+				if (!software_barycentric_pixel) entry->second.prefetched = std::move(group->modules);
 				// (Bytes written without the linear SRT plan LoadSpilledPlan made since are not the plan's now: a sweep
 				// writes its own, else a plan brought back would not match the linear SRT plan kept for it.)
 				if (!group->plan_linear_dropped)
@@ -2368,9 +2374,14 @@ struct PipelineCache::ProgramCache {
 		const auto source_begin = PipelineSourceLog() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
 		bool       translated_here = false;
 		double     translate_ms    = 0.0;
-		const auto adopt = [&] { return AdoptPrefetchedModule(entry->second, options, specialization, push_data_cursor); };
+		const auto adopt = [&] {
+			return software_barycentric_pixel
+			           ? nullptr
+			           : AdoptPrefetchedModule(entry->second, options, specialization, push_data_cursor);
+		};
 		if (entry == programs.end() ||
-		    (adopt() == nullptr && (!TakePrefetchedModules(entry->second, params) || adopt() == nullptr))) {
+		    (adopt() == nullptr &&
+		     (software_barycentric_pixel || !TakePrefetchedModules(entry->second, params) || adopt() == nullptr))) {
 			translated_here = true;
 			// With the slow-call log: the translation's specialization-independent part (front) and
 			// whether the program had other permutations already.
@@ -2518,7 +2529,8 @@ struct PipelineCache::ProgramCache {
 	// SPIR-V read back as translated; false (the job as it was) where the cache lists none.
 	static bool TakeDiskTranslation(vk::Device device, DiskCache& cache, const ShaderRecompiler::CompileOptions& options,
 	                                DiskProgram& listed, WarmJob& job) {
-		if (listed.modules.empty() || listed.plan.bytes == 0) return false;
+		if ((options.stage == ShaderType::Pixel && ShaderRecompiler::SoftwareFragmentBarycentricsEnabled()) ||
+		    listed.modules.empty() || listed.plan.bytes == 0) return false;
 		ShaderRecompiler::IR::ResourcePlan plan;
 		bool                               linear = false;
 		if (!ReadDiskPlan(cache.file, listed.plan, plan, linear)) {

@@ -35,6 +35,7 @@ struct ShaderRegisters;
 
 enum class ShaderType { Unknown, Vertex, Pixel, Fetch, Compute, Mesh };
 
+
 namespace ShaderRecompiler::IR {
 struct CompiledShaderInfo;
 } // namespace ShaderRecompiler::IR

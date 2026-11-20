@@ -43,6 +43,11 @@ struct CompileResult {
 	IR::Program            program;
 };
 
+// Set before shader compilation after Vulkan feature discovery. The fallback changes the pixel interface and
+// requires CreatePipelineInternal to insert its generated geometry stage.
+void SetSoftwareFragmentBarycentricsEnabled(bool enabled);
+[[nodiscard]] bool SoftwareFragmentBarycentricsEnabled();
+
 // Storage buffer accesses without an explicit bounds check where the device checks them the same
 // way: robustBufferAccess2 with byte-exact ranges (robustStorageBufferAccessSizeAlignment 1) reads
 // zero out of bounds and drops the stores. Set with the device, before any program compiles.

@@ -1103,6 +1103,105 @@ void CreatePipelineInternal(
 	EXIT_NOT_IMPLEMENTED(
 	    rect_list && (tess_control_shader_module == nullptr || tess_eval_shader_module == nullptr));
 
+	const bool pixel_uses_barycentrics =
+	    ps_active && std::any_of(ps_input_info->stage.program->info.inputs.begin(),
+	                             ps_input_info->stage.program->info.inputs.end(), [](const auto& input) {
+		                             return input.per_vertex ||
+		                                    input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordSmooth ||
+		                                    input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordNoPerspective;
+	                             });
+	const bool software_barycentric_geometry =
+	    graphics.software_fragment_barycentrics && pixel_uses_barycentrics;
+	vk::ShaderModule geometry_shader_module = nullptr;
+	std::vector<uint32_t> geometry_shader_spirv;
+	vk::PipelineShaderStageCreateInfo geometry_shader_stage_info {};
+	if (software_barycentric_geometry) {
+		EXIT_NOT_IMPLEMENTED(mesh);
+		const bool triangle_topology =
+		    rect_list || static_params.topology == vk::PrimitiveTopology::eTriangleList ||
+		    static_params.topology == vk::PrimitiveTopology::eTriangleStrip ||
+		    static_params.topology == vk::PrimitiveTopology::eTriangleFan;
+		EXIT_NOT_IMPLEMENTED(!triangle_topology);
+		geometry_shader_spirv =
+		    BuildFragmentBarycentricGeometryShader(vs_input_info, *ps_input_info);
+		EXIT_NOT_IMPLEMENTED(geometry_shader_spirv.empty());
+
+		const auto& limits = graphics.GetPhysicalDeviceProperties().limits;
+		uint32_t fragment_components = 0u;
+		uint32_t geometry_input_components = 4u;
+		uint32_t geometry_output_components = 7u; // Position and the three interpolated barycentric weights.
+		uint32_t geometry_builtin_components = 0u;
+		for (const auto& output: vs_input_info.stage.program->info.outputs) {
+			switch (output.kind) {
+				case ShaderRecompiler::IR::StageOutputKind::PointSize:
+					geometry_builtin_components = std::max(geometry_builtin_components, 1u);
+					break;
+				case ShaderRecompiler::IR::StageOutputKind::ClipDistance:
+				case ShaderRecompiler::IR::StageOutputKind::CullDistance:
+					geometry_builtin_components += 1u;
+					break;
+				case ShaderRecompiler::IR::StageOutputKind::Layer:
+				case ShaderRecompiler::IR::StageOutputKind::ViewportIndex:
+					geometry_builtin_components += 1u;
+					break;
+				default: break;
+			}
+		}
+		geometry_input_components += geometry_builtin_components;
+		geometry_output_components += geometry_builtin_components;
+		for (const auto& input: ps_input_info->stage.program->info.inputs) {
+			if (input.kind == ShaderRecompiler::IR::StageInputKind::Parameter) {
+				const auto components = input.per_vertex ? 12u : 4u;
+				fragment_components += components;
+				geometry_output_components += components;
+			} else if (input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordSmooth ||
+			           input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordNoPerspective) {
+				fragment_components += 3u;
+			} else {
+				fragment_components += input.component_count;
+			}
+		}
+		std::vector<uint32_t> geometry_input_locations;
+		for (const auto& input: ps_input_info->stage.program->info.inputs) {
+			if (input.kind != ShaderRecompiler::IR::StageInputKind::Parameter) continue;
+			const auto location = ShaderPixelParameterMappedLocation(*ps_input_info, input.location);
+			const bool exported = std::any_of(
+			    vs_input_info.stage.program->info.outputs.begin(),
+			    vs_input_info.stage.program->info.outputs.end(), [location](const auto& output) {
+				    return output.kind == ShaderRecompiler::IR::StageOutputKind::Parameter &&
+				           output.index == location;
+			    });
+			if (exported && std::find(geometry_input_locations.begin(), geometry_input_locations.end(), location) ==
+			                    geometry_input_locations.end()) {
+				geometry_input_locations.push_back(location);
+			}
+		}
+		geometry_input_components += static_cast<uint32_t>(geometry_input_locations.size()) * 4u;
+		EXIT_NOT_IMPLEMENTED(geometry_input_components > limits.maxGeometryInputComponents ||
+		                     geometry_output_components > limits.maxGeometryOutputComponents ||
+		                     geometry_output_components * 3u > limits.maxGeometryTotalOutputComponents ||
+		                     fragment_components > limits.maxFragmentInputComponents ||
+		                     limits.maxGeometryOutputVertices < 3u);
+
+		vk::ShaderModuleCreateInfo geometry_create {};
+		geometry_create.codeSize = geometry_shader_spirv.size() * sizeof(uint32_t);
+		geometry_create.pCode    = geometry_shader_spirv.data();
+		EXIT_NOT_IMPLEMENTED(graphics.device.createShaderModule(
+		                         &geometry_create, nullptr, &geometry_shader_module) != vk::Result::eSuccess);
+		geometry_shader_stage_info.stage  = vk::ShaderStageFlagBits::eGeometry;
+		geometry_shader_stage_info.module = geometry_shader_module;
+		geometry_shader_stage_info.pName  = "main";
+		if (ModuleSpirvHashesRecorded()) {
+			NotePipelineKeyModule(geometry_shader_module, vs_input_info.stage.program->shader_hash,
+			                      XXH3_64bits(geometry_shader_spirv.data(),
+			                                  geometry_shader_spirv.size() * sizeof(uint32_t)),
+			                      geometry_shader_spirv.size() * sizeof(uint32_t));
+		}
+		std::printf("Fragment barycentrics: generated geometry-stage fallback for PS %016llx\n",
+		            static_cast<unsigned long long>(ps_input_info->stage.program->shader_hash));
+		std::fflush(stdout);
+	}
+
 	vk::PipelineShaderStageCreateInfo vert_shader_stage_info {};
 	vert_shader_stage_info.stage  = vertex_stage;
 	vert_shader_stage_info.module = vertex_program.module;
@@ -1128,12 +1227,15 @@ void CreatePipelineInternal(
 	tess_eval_shader_stage_info.module = tess_eval_shader_module;
 	tess_eval_shader_stage_info.pName  = "main";
 
-	vk::PipelineShaderStageCreateInfo shader_stages[4]   = {};
+	vk::PipelineShaderStageCreateInfo shader_stages[5]   = {};
 	uint32_t                          shader_stage_count = 0;
 	shader_stages[shader_stage_count++]                  = vert_shader_stage_info;
 	if (rect_list) {
 		shader_stages[shader_stage_count++] = tess_control_shader_stage_info;
 		shader_stages[shader_stage_count++] = tess_eval_shader_stage_info;
+	}
+	if (software_barycentric_geometry) {
+		shader_stages[shader_stage_count++] = geometry_shader_stage_info;
 	}
 	vk::PipelineShaderStageCreateInfo empty_frag_stage_info {};
 	if (ps_active) {
@@ -1426,9 +1528,16 @@ void CreatePipelineInternal(
 	}
 	// Its identity: for pipeline cache blobs and the source log.
 	const auto     identity_start = PipelineSourceLog() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+	uint64_t vertex_identity_spirv = ModuleSpirvHash(vertex_program.module);
+	if (!geometry_shader_spirv.empty()) {
+		const uint64_t stage_hashes[] = {
+		    vertex_identity_spirv,
+		    XXH3_64bits(geometry_shader_spirv.data(), geometry_shader_spirv.size() * sizeof(uint32_t))};
+		vertex_identity_spirv = XXH3_64bits(stage_hashes, sizeof(stage_hashes));
+	}
 	const uint64_t identity =
 	    PipelineSourceLog() || graphics.pipeline_blobs != nullptr || graphics.pipeline_blob_writer != nullptr
-	        ? GraphicsPipelineIdentity(ModuleSpirvHash(vertex_program.module),
+	        ? GraphicsPipelineIdentity(vertex_identity_spirv,
 	                                   ps_active ? ModuleSpirvHash(pixel_program.module) : 0, rendering, vertex_input,
 	                                   static_params, vs_input_info, ps_input_info, native_bindings)
 	        : 0;
@@ -1478,7 +1587,8 @@ void CreatePipelineInternal(
 		            t_blob_times.bytes, t_blob_times.read_us, t_blob_times.cache_us, t_blob_times.create_us);
 		std::printf("PIPESPV key=%016llx spirv=%zu before_us=%.0f identity_us=%.0f handle_us=%.0f layout_us=%.0f\n",
 		            static_cast<unsigned long long>(identity),
-		            ModuleSpirvBytes(vertex_program.module) + (ps_active ? ModuleSpirvBytes(pixel_program.module) : 0),
+		            ModuleSpirvBytes(vertex_program.module) + (ps_active ? ModuleSpirvBytes(pixel_program.module) : 0) +
+		                geometry_shader_spirv.size() * sizeof(uint32_t),
 		            std::chrono::duration<double, std::micro>(identity_start - source_start).count(),
 		            std::chrono::duration<double, std::micro>(handle_start - identity_start).count(),
 		            MicrosecondsSince(handle_start), t_layout_us);
@@ -1489,6 +1599,9 @@ void CreatePipelineInternal(
 	}
 	if (tess_eval_shader_module != nullptr) {
 		graphics.device.destroyShaderModule(tess_eval_shader_module, nullptr);
+	}
+	if (geometry_shader_module != nullptr) {
+		graphics.device.destroyShaderModule(geometry_shader_module, nullptr);
 	}
 }
 

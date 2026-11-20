@@ -1125,9 +1125,15 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	// cannot stand in for them (tried: colourless characters and textures in blocks; issue #305).
 	const bool barycentric_supported =
 	    barycentric_extension && fragment_barycentric.fragmentShaderBarycentric == VK_TRUE;
-	if (!barycentric_supported) {
-		std::printf("Vulkan: this GPU has no fragment shader barycentrics (VK_KHR_fragment_shader_barycentric): nearly every "
-		            "pixel shader of Demon's Souls needs them, and their pipelines will fail\n");
+	graphics.software_fragment_barycentrics =
+	    !barycentric_supported && supported_features2.features.geometryShader == VK_TRUE;
+	ShaderRecompiler::SetSoftwareFragmentBarycentricsEnabled(
+	    graphics.software_fragment_barycentrics);
+	if (!barycentric_supported && graphics.software_fragment_barycentrics) {
+		std::printf("Vulkan: native fragment barycentrics unavailable; using the geometry-stage software fallback\n");
+	} else if (!barycentric_supported) {
+		std::printf("Vulkan: this GPU has neither fragment barycentrics nor geometryShader; barycentric pixel shaders "
+		            "cannot be emulated\n");
 	}
 	graphics.attachment_feedback_loop_enabled =
 	    feedback_extensions && feedback_layout.attachmentFeedbackLoopLayout &&
@@ -1186,6 +1192,7 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	device_features.shaderImageGatherExtended            = VK_TRUE;
 	device_features.independentBlend                     = VK_TRUE;
 	device_features.tessellationShader                   = VK_TRUE;
+	device_features.geometryShader                      = graphics.software_fragment_barycentrics ? VK_TRUE : VK_FALSE;
 	device_features.sampleRateShading                    = VK_TRUE;
 	device_features.depthBiasClamp                       = VK_TRUE;
 	device_features.shaderClipDistance                   = VK_TRUE;

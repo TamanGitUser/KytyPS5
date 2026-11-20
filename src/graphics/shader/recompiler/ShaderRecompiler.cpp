@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -589,6 +590,16 @@ Decoder::Program DecodeFusedProgram(std::span<const uint32_t> front, std::span<c
 
 } // namespace
 
+static std::atomic<bool> g_software_fragment_barycentrics {false};
+
+void SetSoftwareFragmentBarycentricsEnabled(bool enabled) {
+	g_software_fragment_barycentrics.store(enabled, std::memory_order_release);
+}
+
+bool SoftwareFragmentBarycentricsEnabled() {
+	return g_software_fragment_barycentrics.load(std::memory_order_acquire);
+}
+
 TranslateResult TranslateProgram(std::span<const uint32_t> code, const CompileOptions& options) {
 	if (code.empty()) {
 		EXIT("shader recompiler input is empty\n");
@@ -813,6 +824,7 @@ CompileResult CompileProgram(TranslateResult translated, const CompileOptions& o
 	ir.pixel_quad_reads = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeaturePixelQuadReads) != 0;
 	ir.unfused_mad = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureUnfusedMad) != 0;
 	ir.amd_barycentrics = (Frontend::TranslatorFeatureSet() & Frontend::TranslatorFeatureAmdBarycentrics) != 0;
+	ir.software_fragment_barycentrics = options.stage == ShaderType::Pixel && SoftwareFragmentBarycentricsEnabled();
 	IR::AllocateBindings(ir, push_data_start_dword, options.enable_lod_stats,
 	                     options.table_mode && options.table_dead_user_data);
 	DumpShaderIr(options, ir);

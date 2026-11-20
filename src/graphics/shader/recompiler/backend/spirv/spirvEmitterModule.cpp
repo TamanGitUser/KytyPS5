@@ -521,6 +521,14 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 			    {OpDecorate, state.subgroup_local_invocation_id_variable, DecorationFlat});
 		}
 	}
+	uint32_t software_barycentric_location = 0;
+	if (state.program.software_fragment_barycentrics) {
+		for (const auto& input: state.inputs) {
+			if (input.kind == IR::StageInputKind::Parameter) {
+				software_barycentric_location += input.per_vertex ? 3u : 1u;
+			}
+		}
+	}
 	for (const auto& input: state.inputs) {
 		state.builder.AddName(input.variable_id, input.debug_name.c_str());
 		if (input.kind == IR::StageInputKind::Layer || input.kind == IR::StageInputKind::SampleId) {
@@ -529,8 +537,13 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 		if (input.kind == IR::StageInputKind::Parameter) {
 			const auto flat = PixelParameterIsFlat(state, input.location);
 			if (input.per_vertex) {
-				state.builder.AddAnnotation(
-				    {OpDecorate, input.variable_id, DecorationPerVertexKHR});
+				if (state.program.software_fragment_barycentrics) {
+					// The geometry stage supplies a flat vec4[3] payload at a normal user location.
+					state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationFlat});
+				} else {
+					state.builder.AddAnnotation(
+					    {OpDecorate, input.variable_id, DecorationPerVertexKHR});
+				}
 			} else if (flat) {
 				state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationFlat});
 			}
@@ -542,6 +555,16 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 			const auto location = PixelParameterLocation(state, input.location);
 			state.builder.AddAnnotation(
 			    {OpDecorate, input.variable_id, DecorationLocation, location});
+			continue;
+		}
+		if (state.program.software_fragment_barycentrics &&
+		    (input.kind == IR::StageInputKind::BaryCoordSmooth ||
+		     input.kind == IR::StageInputKind::BaryCoordNoPerspective)) {
+			state.builder.AddAnnotation(
+			    {OpDecorate, input.variable_id, DecorationLocation, software_barycentric_location});
+			if (input.kind == IR::StageInputKind::BaryCoordNoPerspective) {
+				state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationNoPerspective});
+			}
 			continue;
 		}
 		auto builtin = BuiltInForInput(input.kind);
@@ -765,7 +788,9 @@ void DefineModule(EmitterState& state) {
 		    return input.per_vertex || input.kind == IR::StageInputKind::BaryCoordSmooth ||
 		           input.kind == IR::StageInputKind::BaryCoordNoPerspective;
 	    });
-	if (fragment_barycentric && state.amd_barycentrics) {
+	if (fragment_barycentric && state.program.software_fragment_barycentrics) {
+		// Ordinary interpolated user varyings are supplied by the generated geometry stage.
+	} else if (fragment_barycentric && state.amd_barycentrics) {
 		// (No per-vertex input: the barycentrics are the only use. The AMD built-ins need no capability.)
 		state.builder.RequireExtension("SPV_AMD_shader_explicit_vertex_parameter");
 	} else if (fragment_barycentric) {
