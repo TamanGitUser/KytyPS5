@@ -397,9 +397,11 @@ public:
 	BarycentricGeometryEmitter(const std::vector<BarycentricSourceParameter>& sources_,
 	                           std::vector<BarycentricParameter>& parameters_,
 	                           bool no_perspective_, uint32_t barycentric_location_,
-	                           BarycentricPerVertexOutputs builtins_)
+	                           BarycentricPerVertexOutputs builtins_, bool has_barycentric_,
+	                           bool provoking_vertex_last_)
 	    : sources(sources_), parameters(parameters_), no_perspective(no_perspective_),
-	      barycentric_location(barycentric_location_), builtins(builtins_) {}
+	      barycentric_location(barycentric_location_), builtins(builtins_),
+	      has_barycentric(has_barycentric_), provoking_vertex_last(provoking_vertex_last_) {}
 
 	std::vector<uint32_t> Emit() {
 		builder.RequireCapability(Word(spv::Capability::Shader));
@@ -425,8 +427,9 @@ public:
 		gl_out = AddInterface(spv::StorageClass::Output, per_vertex_type);
 		DefineBuiltInInterfaces();
 
+		const auto zero = Float(0.0f);
 		DefineParameterInterfaces();
-		DefineBarycentricInterface();
+		if (has_barycentric) DefineBarycentricInterface();
 
 		main = builder.AllocateId();
 		builder.AddExecutionMode({main, Word(spv::ExecutionMode::Triangles)});
@@ -655,8 +658,12 @@ private:
 				CopyPerVertexInteger(vertex, viewport_index_input, viewport_index_output);
 			}
 
+			const uint32_t provoking_vertex = provoking_vertex_last ? 2u : 0u;
 			for (size_t p = 0; p < parameters.size(); p++) {
 				const auto& parameter = parameters[p];
+				// These outputs are Flat. Only the provoking vertex contributes to the fragment
+				// value, so leave the other two vertices' flat outputs unwritten.
+				if (vertex != provoking_vertex && (parameter.per_vertex || parameter.flat)) continue;
 				if (parameter.per_vertex) {
 					for (uint32_t source_vertex = 0; source_vertex < 3; source_vertex++) {
 						Store(parameter_variables[p][source_vertex], per_vertex_values[p][source_vertex]);
@@ -669,7 +676,7 @@ private:
 					Store(parameter_variables[p][0], value);
 				}
 			}
-			Store(barycentric_output, barycentric_basis[vertex]);
+			if (has_barycentric) Store(barycentric_output, barycentric_basis[vertex]);
 			builder.AddFunction({Word(spv::Op::OpEmitVertex)});
 		}
 		builder.AddFunction({Word(spv::Op::OpEndPrimitive)});
@@ -683,6 +690,8 @@ private:
 	bool no_perspective = false;
 	uint32_t barycentric_location = 0;
 	BarycentricPerVertexOutputs builtins;
+	bool has_barycentric = false;
+	bool provoking_vertex_last = false;
 	std::vector<uint32_t> interfaces;
 	std::vector<uint32_t> source_variables;
 	std::vector<std::array<uint32_t, 3>> parameter_variables;
@@ -704,7 +713,7 @@ private:
 
 std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
     const ShaderVertexInputInfo& vertex_info, const ShaderPixelInputInfo& pixel_info,
-    bool rect_list) {
+    bool rect_list, bool provoking_vertex_last) {
 	if (!vertex_info.stage || !pixel_info.stage ||
 	    vertex_info.stage.program->stage == ShaderType::Mesh) {
 		return {};
@@ -783,7 +792,8 @@ std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
 	        ? barycentric->kind == ShaderRecompiler::IR::StageInputKind::BaryCoordNoPerspective
 	        : pixel_info.ps_no_perspective;
 	BarycentricGeometryEmitter emitter(sources, parameters, no_perspective,
-	                                      software_location, builtins);
+	                                      software_location, builtins,
+	                                      barycentric != pixel_inputs.end(), provoking_vertex_last);
 	return emitter.Emit();
 }
 

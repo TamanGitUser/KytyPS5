@@ -1117,6 +1117,12 @@ void CreatePipelineInternal(
 		                             return input.kind == ShaderRecompiler::IR::StageInputKind::Parameter &&
 		                                    input.per_vertex;
 	                             });
+	const bool pixel_has_barycentric_weights =
+	    ps_active && std::any_of(ps_input_info->stage.program->info.inputs.begin(),
+	                             ps_input_info->stage.program->info.inputs.end(), [](const auto& input) {
+		                             return input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordSmooth ||
+		                                    input.kind == ShaderRecompiler::IR::StageInputKind::BaryCoordNoPerspective;
+	                             });
 	const bool amd_barycentrics_active =
 	    (ShaderRecompiler::Frontend::TranslatorFeatureSet() &
 	     ShaderRecompiler::Frontend::TranslatorFeatureAmdBarycentrics) != 0;
@@ -1133,14 +1139,15 @@ void CreatePipelineInternal(
 		    static_params.topology == vk::PrimitiveTopology::eTriangleStrip ||
 		    static_params.topology == vk::PrimitiveTopology::eTriangleFan;
 		EXIT_NOT_IMPLEMENTED(!triangle_topology);
-		geometry_shader_spirv =
-		    BuildFragmentBarycentricGeometryShader(vs_input_info, *ps_input_info, rect_list);
+		geometry_shader_spirv = BuildFragmentBarycentricGeometryShader(
+		    vs_input_info, *ps_input_info, rect_list,
+		    graphics.provoking_vertex_last_enabled && static_params.provoking_vtx_last);
 		EXIT_NOT_IMPLEMENTED(geometry_shader_spirv.empty());
 
 		const auto& limits = graphics.GetPhysicalDeviceProperties().limits;
 		uint32_t fragment_components = 0u;
 		uint32_t geometry_input_components = 4u;
-		uint32_t geometry_output_components = 7u; // Position and the three interpolated barycentric weights.
+		uint32_t geometry_output_components = 4u + (pixel_has_barycentric_weights ? 3u : 0u);
 		uint32_t geometry_builtin_components = 0u;
 		if (!rect_list) {
 			uint32_t clip_distance_components = 0u;

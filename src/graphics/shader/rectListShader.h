@@ -16,7 +16,7 @@ struct RectListShaders {
 
 std::vector<uint32_t> BuildFragmentBarycentricGeometryShader(
     const ShaderVertexInputInfo& vertex_info, const ShaderPixelInputInfo& pixel_info,
-    bool rect_list = false);
+    bool rect_list = false, bool provoking_vertex_last = false);
 
 RectListShaders BuildRectListShaders(const ShaderVertexInputInfo& vertex_info,
                                      const ShaderPixelInputInfo*  pixel_info);
