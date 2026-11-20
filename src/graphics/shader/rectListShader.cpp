@@ -428,6 +428,8 @@ public:
 		DefineBuiltInInterfaces();
 
 		const auto zero = Float(0.0f);
+		zero_vec4 = builder.Constant(Word(spv::Op::OpConstantComposite), vec4_float_type,
+		                             {zero, zero, zero, zero});
 		DefineParameterInterfaces();
 		if (has_barycentric) DefineBarycentricInterface();
 
@@ -566,8 +568,6 @@ private:
 		    Word(spv::Op::OpConstantComposite), vec3_float_type, {zero, one, zero});
 		barycentric_basis[2] = builder.Constant(
 		    Word(spv::Op::OpConstantComposite), vec3_float_type, {zero, zero, one});
-		zero_vec4 = builder.Constant(Word(spv::Op::OpConstantComposite), vec4_float_type,
-		                             {zero, zero, zero, zero});
 	}
 
 	template <typename... Args>
@@ -615,11 +615,11 @@ private:
 		Store(output, value);
 	}
 
-	uint32_t SourceVariable(uint32_t location) const {
+	size_t SourceIndex(uint32_t location) const {
 		for (size_t i = 0; i < sources.size(); i++) {
-			if (sources[i].location == location) return source_variables[i];
+			if (sources[i].location == location) return i;
 		}
-		return 0;
+		return sources.size();
 	}
 
 	void EmitFunction() {
@@ -631,14 +631,17 @@ private:
 		// interface values undefined, but does not invalidate input values or SSA temporaries. Per-vertex
 		// fragment parameters are forwarded as three flat outputs, identical for each emitted vertex, so
 		// load their three source values once and reuse them for all three emissions.
-		std::vector<std::array<uint32_t, 3>> per_vertex_values(parameters.size());
+		// Cache each unique vertex-output location for all three vertices. Several pixel inputs may
+		// legally map to the same vertex output; loading it once avoids duplicate geometry-stage work.
+		std::vector<std::array<uint32_t, 3>> source_values(sources.size());
 		for (size_t p = 0; p < parameters.size(); p++) {
 			if (!parameters[p].per_vertex) continue;
-			const auto source = SourceVariable(parameters[p].source_location);
+			const auto source_index = SourceIndex(parameters[p].source_location);
+			if (source_index == sources.size() || source_values[source_index][0] != 0) continue;
 			for (uint32_t source_vertex = 0; source_vertex < 3; source_vertex++) {
-				per_vertex_values[p][source_vertex] = source != 0
-				    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(source_vertex)))
-				    : zero_vec4;
+				source_values[source_index][source_vertex] =
+				    Load(vec4_float_type, Access(ptr_input_vec4, source_variables[source_index],
+				                                 Int(source_vertex)));
 			}
 		}
 
@@ -664,15 +667,25 @@ private:
 				// These outputs are Flat. Only the provoking vertex contributes to the fragment
 				// value, so leave the other two vertices' flat outputs unwritten.
 				if (vertex != provoking_vertex && (parameter.per_vertex || parameter.flat)) continue;
+				const auto source_index = SourceIndex(parameter.source_location);
 				if (parameter.per_vertex) {
 					for (uint32_t source_vertex = 0; source_vertex < 3; source_vertex++) {
-						Store(parameter_variables[p][source_vertex], per_vertex_values[p][source_vertex]);
+						const auto value = source_index != sources.size()
+						    ? source_values[source_index][source_vertex]
+						    : zero_vec4;
+						Store(parameter_variables[p][source_vertex], value);
 					}
 				} else {
-					const auto source = SourceVariable(parameter.source_location);
-					const auto value = source != 0
-					    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(vertex)))
-					    : zero_vec4;
+					uint32_t value = zero_vec4;
+					if (source_index != sources.size()) {
+						auto& cached_value = source_values[source_index][vertex];
+						if (cached_value == 0) {
+							cached_value = Load(vec4_float_type,
+							                    Access(ptr_input_vec4, source_variables[source_index],
+							                           Int(vertex)));
+						}
+						value = cached_value;
+					}
 					Store(parameter_variables[p][0], value);
 				}
 			}
