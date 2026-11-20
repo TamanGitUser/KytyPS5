@@ -838,7 +838,9 @@ CompileResult CompileProgram(TranslateResult translated, const CompileOptions& o
 	    options.stage == ShaderType::Pixel && SoftwareFragmentBarycentricsEnabled() &&
 	    pixel_needs_software_barycentrics &&
 	    (!amd_barycentrics_available || pixel_has_per_vertex_parameters);
-	ir.amd_barycentrics = !ir.software_fragment_barycentrics && amd_barycentrics_available;
+	ir.amd_barycentrics =
+	    options.stage == ShaderType::Pixel && amd_barycentrics_available &&
+	    !pixel_has_per_vertex_parameters && !ir.software_fragment_barycentrics;
 	IR::AllocateBindings(ir, push_data_start_dword, options.enable_lod_stats,
 	                     options.table_mode && options.table_dead_user_data);
 	DumpShaderIr(options, ir);
