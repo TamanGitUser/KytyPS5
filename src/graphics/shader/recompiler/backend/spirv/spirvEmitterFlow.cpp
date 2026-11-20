@@ -313,6 +313,15 @@ uint32_t EmitAttribute(ValueEmitContext& ctx, uint32_t attr, uint32_t chan) {
 		return EmitVertexParameterComponentU32(state, *input, chan & 3u);
 	}
 	const auto load_per_vertex = [&](uint32_t vertex) {
+		if (input->per_vertex_variable_ids[vertex] != 0) {
+			const auto vector = state.builder.AllocateId();
+			const auto value = state.builder.AllocateId();
+			state.builder.AddFunction(
+			    {OpLoad, TypeF32Vector(state, 4), vector, input->per_vertex_variable_ids[vertex]});
+			state.builder.AddFunction(
+			    {OpCompositeExtract, TypeF32(state), value, vector, chan & 3u});
+			return value;
+		}
 		const auto pointer = state.builder.AllocateId();
 		const auto value   = state.builder.AllocateId();
 		state.builder.AddFunction(
@@ -372,6 +381,15 @@ uint32_t EmitInterpolationParameter(ValueEmitContext& ctx, uint32_t attr, uint32
 		return EmitAttribute(ctx, attr, chan);
 	}
 	const auto load_vertex = [&](uint32_t vertex) {
+		if (input->per_vertex_variable_ids[vertex] != 0) {
+			const auto vector = state.builder.AllocateId();
+			const auto value = state.builder.AllocateId();
+			state.builder.AddFunction(
+			    {OpLoad, TypeF32Vector(state, 4), vector, input->per_vertex_variable_ids[vertex]});
+			state.builder.AddFunction(
+			    {OpCompositeExtract, TypeF32(state), value, vector, chan & 3u});
+			return value;
+		}
 		const auto pointer = state.builder.AllocateId();
 		const auto value   = state.builder.AllocateId();
 		state.builder.AddFunction(

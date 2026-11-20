@@ -342,6 +342,7 @@ struct InputBinding {
 	uint32_t           variable_id     = 0;
 	std::string        debug_name;
 	bool               per_vertex = false;
+	std::array<uint32_t, 3> per_vertex_variable_ids {};
 };
 
 struct OutputBinding {

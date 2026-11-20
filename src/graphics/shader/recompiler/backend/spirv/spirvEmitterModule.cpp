@@ -416,8 +416,17 @@ void AllocateInputVariables(EmitterState& state) {
 		add_builtin(IR::StageInputKind::LocalInvocationIndex, 1, "gl_LocalInvocationIndex");
 	}
 	for (auto& binding: state.inputs) {
-		binding.variable_id = state.builder.AllocateId();
-		state.interface_variables.push_back(binding.variable_id);
+		if (state.stage == ShaderType::Pixel && state.program.software_fragment_barycentrics &&
+		    binding.kind == IR::StageInputKind::Parameter && binding.per_vertex) {
+			for (auto& variable: binding.per_vertex_variable_ids) {
+				variable = state.builder.AllocateId();
+				state.interface_variables.push_back(variable);
+			}
+			binding.variable_id = binding.per_vertex_variable_ids[0];
+		} else {
+			binding.variable_id = state.builder.AllocateId();
+			state.interface_variables.push_back(binding.variable_id);
+		}
 	}
 	if (state.requirements.subgroup_local_invocation_id) {
 		state.subgroup_local_invocation_id_variable = state.builder.AllocateId();
@@ -530,6 +539,19 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 		}
 	}
 	for (const auto& input: state.inputs) {
+		if (input.kind == IR::StageInputKind::Parameter && input.per_vertex &&
+		    state.program.software_fragment_barycentrics) {
+			const auto location = PixelParameterLocation(state, input.location);
+			for (uint32_t vertex = 0; vertex < 3u; vertex++) {
+				const auto name = fmt::format("{}_vertex_{}", input.debug_name, vertex);
+				const auto variable = input.per_vertex_variable_ids[vertex];
+				state.builder.AddName(variable, name.c_str());
+				state.builder.AddAnnotation({OpDecorate, variable, DecorationFlat});
+				state.builder.AddAnnotation(
+				    {OpDecorate, variable, DecorationLocation, location + vertex});
+			}
+			continue;
+		}
 		state.builder.AddName(input.variable_id, input.debug_name.c_str());
 		if (input.kind == IR::StageInputKind::Layer || input.kind == IR::StageInputKind::SampleId) {
 			state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationFlat});
@@ -537,13 +559,9 @@ void AddInputAnnotationsAndNames(EmitterState& state) {
 		if (input.kind == IR::StageInputKind::Parameter) {
 			const auto flat = PixelParameterIsFlat(state, input.location);
 			if (input.per_vertex) {
-				if (state.program.software_fragment_barycentrics) {
-					// The geometry stage supplies a flat vec4[3] payload at a normal user location.
-					state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationFlat});
-				} else {
-					state.builder.AddAnnotation(
-					    {OpDecorate, input.variable_id, DecorationPerVertexKHR});
-				}
+				// The native barycentric path keeps the KHR per-vertex input array.
+				state.builder.AddAnnotation(
+				    {OpDecorate, input.variable_id, DecorationPerVertexKHR});
 			} else if (flat) {
 				state.builder.AddAnnotation({OpDecorate, input.variable_id, DecorationFlat});
 			}
@@ -890,6 +908,8 @@ void DefineModule(EmitterState& state) {
 					const auto kind       = VertexParameterScalarKind(state, input.location);
 					const auto components = VertexParameterComponentCount(input);
 					ptr_type = VertexParameterInputPointerType(state, kind, components);
+				} else if (input.per_vertex && state.program.software_fragment_barycentrics) {
+					ptr_type = TypePointer(state, StorageClassInput, TypeF32Vector(state, 4));
 				} else if (input.per_vertex) {
 					const auto array_type = state.builder.Type(
 					    OpTypeArray, {TypeF32Vector(state, 4), ConstantU32(state, 3)});
@@ -900,7 +920,14 @@ void DefineModule(EmitterState& state) {
 				break;
 			default: break;
 		}
-		state.builder.DefineGlobalVariable(input.variable_id, ptr_type, StorageClassInput);
+		if (state.stage == ShaderType::Pixel && state.program.software_fragment_barycentrics &&
+		    input.kind == IR::StageInputKind::Parameter && input.per_vertex) {
+			for (const auto variable: input.per_vertex_variable_ids) {
+				state.builder.DefineGlobalVariable(variable, ptr_type, StorageClassInput);
+			}
+		} else {
+			state.builder.DefineGlobalVariable(input.variable_id, ptr_type, StorageClassInput);
+		}
 	}
 	if (state.stage == ShaderType::Mesh) {
 		return;

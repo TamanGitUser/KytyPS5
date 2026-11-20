@@ -531,18 +531,19 @@ private:
 			Decorate(source_variables.back(), spv::Decoration::Location, source.location);
 		}
 		for (auto& parameter: parameters) {
-			const auto type = parameter.per_vertex
-			                      ? Array(vec4_float_type, 3u)
-			                      : vec4_float_type;
-			parameter_variables.push_back(AddInterface(spv::StorageClass::Output, type));
-			auto variable = parameter_variables.back();
-			Decorate(variable, spv::Decoration::Location,
-			         parameter.per_vertex ? parameter.software_location : parameter.pixel_location);
-			if (parameter.per_vertex || parameter.flat) {
-				DecorateFlag(variable, spv::Decoration::Flat);
-			} else if (parameter.no_perspective) {
-				DecorateFlag(variable, spv::Decoration::NoPerspective);
+			std::array<uint32_t, 3> variables {};
+			const auto variable_count = parameter.per_vertex ? 3u : 1u;
+			for (uint32_t vertex = 0; vertex < variable_count; vertex++) {
+				variables[vertex] = AddInterface(spv::StorageClass::Output, vec4_float_type);
+				Decorate(variables[vertex], spv::Decoration::Location,
+				         parameter.software_location + vertex);
+				if (parameter.per_vertex || parameter.flat) {
+					DecorateFlag(variables[vertex], spv::Decoration::Flat);
+				} else if (parameter.no_perspective) {
+					DecorateFlag(variables[vertex], spv::Decoration::NoPerspective);
+				}
 			}
+			parameter_variables.push_back(variables);
 		}
 	}
 
@@ -646,13 +647,13 @@ private:
 						const auto value = source != 0
 						    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(source_vertex)))
 						    : zero_vec4;
-						Store(Access(ptr_output_vec4, parameter_variables[p], Int(source_vertex)), value);
+						Store(parameter_variables[p][source_vertex], value);
 					}
 				} else {
 					const auto value = source != 0
 					    ? Load(vec4_float_type, Access(ptr_input_vec4, source, Int(vertex)))
 					    : zero_vec4;
-					Store(parameter_variables[p], value);
+					Store(parameter_variables[p][0], value);
 				}
 			}
 			Store(barycentric_output, barycentric_basis[vertex]);
