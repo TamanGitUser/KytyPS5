@@ -24,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -89,7 +90,10 @@ inline void Enable(VkDevice device, PFN_vkGetDeviceProcAddr get_proc) {
 }
 
 [[nodiscard]] inline bool CheckpointsRequested() {
-	static const bool requested = std::getenv("KYTY_GPU_CHECKPOINTS") != nullptr;
+	static const bool requested = [] {
+		const char* value = std::getenv("KYTY_GPU_CHECKPOINTS");
+		return value != nullptr && std::string_view(value) == "1";
+	}();
 	return requested;
 }
 [[nodiscard]] inline bool CheckpointsOn() noexcept {

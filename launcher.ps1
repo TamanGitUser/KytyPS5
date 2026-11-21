@@ -401,6 +401,8 @@ function Get-PlayCommand {
 	$arguments += @(Get-GpuArguments)
 	# Switches of the config, one -Set argument (run-windows.ps1 splits it at the commas).
 	$sets = @()
+	# GPU pipeline checkpoints are diagnostic only; allow an explicit -Set override below.
+	$sets += 'KYTY_GPU_CHECKPOINTS=0'
 	# The emulator's panel (KYTY_FPS_HUD) at the top right of the game image: the frame rate and frame times, or with
 	# the GPU, processor and memory too.
 	if ([int]$settings.hud -ge 1) { $sets += "KYTY_FPS_HUD=$([Math]::Min([int]$settings.hud, 2))" }
