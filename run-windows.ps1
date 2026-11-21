@@ -1,4 +1,4 @@
-﻿# Windows launcher: runs the Windows build with the command line of a launch config.
+# Windows launcher: runs the Windows build with the command line of a launch config.
 #   .\run-windows.ps1                        the release package's command line (run-windows.json), 2560x1440
 #   .\run-windows.ps1 -Precompile            compile every recorded shader and pipeline, then exit
 #                                            (every shader of the game: precompile-windows.ps1)
@@ -476,12 +476,30 @@ function Remove-OldRunLogs([string]$directory) {
 	}
 	$sessions = @(
 		Get-ChildItem -LiteralPath $directory -Filter '*.log' -File -ErrorAction SilentlyContinue |
-		Where-Object { $_.Name -match '^\d{8}-\d{6}-\d{3}\.(out|err)\.log
+		Where-Object { $_.Name -match '^\d{8}-\d{6}-\d{3}\.(out|err)\.log$' } |
+		Group-Object { $_.Name.Substring(0, 19) } |
+		Sort-Object Name -Descending
+	)
+	$removed = 0
+	foreach ($session in ($sessions | Select-Object -Skip 1)) {
+		foreach ($file in $session.Group) {
+			Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+			if (!(Test-Path -LiteralPath $file.FullName)) { $removed++ }
+		}
+	}
+	if ($removed -gt 0) {
+		Write-Host "logs: removed $removed old output/error files; keeping the latest completed session"
+	}
+}
+Remove-OldRunLogs $logDir
+
 $gameLabel = if ($titleName) { "$titleName, " } else { "" }
 $testedNote = if ($tested) { "" } else { " (untested: the emulator is tested with " + $testedVersionsText + ")" }
 Write-Host ("game:     " + $gameLabel + $version + $testedNote)
-Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
-Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $(if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs $($environment['KYTY_RENDER_CPUS'])" }))
+$configLabel = if ($Precompile) { "$Config (precompile)" } else { $Config }
+$renderThreadsNote = if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs " + $environment['KYTY_RENDER_CPUS'] } else { "" }
+Write-Host ("config:   " + $configLabel)
+Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $renderThreadsNote)
 Write-Host "switches: $($environment.Count)"
 Write-Host "command:  $Exe $($quoted -join ' ')"
 if ($DryRun) { $environment.GetEnumerator() | ForEach-Object { "  $($_.Key)=$($_.Value)" }; return }
@@ -678,29 +696,15 @@ $lines = @(Get-Content $out -ErrorAction SilentlyContinue | Where-Object { $_ -m
 for (; $shown -lt $lines.Count; $shown++) { Write-Host "  $($lines[$shown])" }
 Write-Host ("exit code {0} after {1:N0} s" -f $process.ExitCode, ((Get-Date) - $begin).TotalSeconds)
 exit $process.ExitCode
- } |
-		Group-Object { $_.Name.Substring(0, 19) } |
-		Sort-Object Name -Descending
-	)
-	$removed = 0
-	foreach ($session in ($sessions | Select-Object -Skip 1)) {
-		foreach ($file in $session.Group) {
-			Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
-			if (!(Test-Path -LiteralPath $file.FullName)) { $removed++ }
-		}
-	}
-	if ($removed -gt 0) {
-		Write-Host "logs: removed $removed old output/error files; keeping the latest completed session"
-	}
-}
-Remove-OldRunLogs $logDir
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $gameLabel = if ($titleName) { "$titleName, " } else { "" }
 $testedNote = if ($tested) { "" } else { " (untested: the emulator is tested with " + $testedVersionsText + ")" }
 Write-Host ("game:     " + $gameLabel + $version + $testedNote)
-Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
-Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $(if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs $($environment['KYTY_RENDER_CPUS'])" }))
+$configLabel = if ($Precompile) { "$Config (precompile)" } else { $Config }
+$renderThreadsNote = if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs " + $environment['KYTY_RENDER_CPUS'] } else { "" }
+Write-Host ("config:   " + $configLabel)
+Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $renderThreadsNote)
 Write-Host "switches: $($environment.Count)"
 Write-Host "command:  $Exe $($quoted -join ' ')"
 if ($DryRun) { $environment.GetEnumerator() | ForEach-Object { "  $($_.Key)=$($_.Value)" }; return }
