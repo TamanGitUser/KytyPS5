@@ -552,7 +552,7 @@ private:
 	void InitializeStaticCache(bool create);
 	// The recorded pipelines; compute ones, newest first, while they took less than `compute_video` bytes of video memory.
 	// `only`: of these recipes alone (LocalShaderWarmup::RecipeKey), none the cache has.
-	void WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only = nullptr);
+	bool WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only = nullptr);
 #ifdef KYTY_STATIC_PRECOMPILE
 	bool SaveStaticCache(vk::PipelineCache cache, const std::filesystem::path& path);
 	static bool MergeBinaryShards(GraphicContext& graphics, bool prune, bool keep_shards);
