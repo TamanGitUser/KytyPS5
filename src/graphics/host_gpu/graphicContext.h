@@ -124,6 +124,8 @@ struct GraphicContext {
 	vk::Queue                          fsr_acquire_queue = nullptr;
 	uint32_t                           fsr_compute_family = static_cast<uint32_t>(-1);
 	uint32_t                           fsr_present_family = static_cast<uint32_t>(-1);
+	uint32_t                           fsr_compute_queue_index = 0;
+	uint32_t                           fsr_acquire_queue_index = 1;
 
 	[[nodiscard]] const vk::PhysicalDeviceProperties& GetPhysicalDeviceProperties() const {
 		return physical_device_properties;
