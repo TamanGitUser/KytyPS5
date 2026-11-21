@@ -10,7 +10,8 @@
     "KYTY_GPU_CHECKPOINTS": "0",
     "KYTY_FAULT_BINDINGS": "1",
     "KYTY_SCENE_WARMUP": "1",
-    "KYTY_SCENE_WARMUP_VIDEO_MIB": "512"
+    "KYTY_SCENE_WARMUP_VIDEO_MIB": "512",
+    "KYTY_READBACK_QUEUE": "0"
   },
   "command": [
     "--",
