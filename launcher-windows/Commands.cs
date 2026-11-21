@@ -117,6 +117,8 @@ sealed class Commands {
 		if (context.FrameGenAvailable && ((!fsrOn && frameGen >= 2) || dlss)) arguments.AddRange(new[] { "-StreamlineDir", Quote(context.Streamline) });
 		AddGpu(arguments);
 		var sets = new List<string>();
+		// Diagnostic pipeline checkpoints are opt-in; explicit Advanced -Set options below can enable them.
+		sets.Add("KYTY_GPU_CHECKPOINTS=0");
 		// The emulator's panel at the top right of the game image: the frame rate and frame times, or with the GPU,
 		// processor and memory too (F8 in the game switches it).
 		var hud = S.Int("hud");
