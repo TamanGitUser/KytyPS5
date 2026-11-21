@@ -463,6 +463,235 @@ if ('KYTY_RECORDING_CPUS', 'KYTY_RENDER_CPUS' | Where-Object { $environment[$_] 
 
 $quoted = @('--game', "`"$Game`"") + ($options | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } })
 $logDir = if (Test-Path "$PSScriptRoot\_Build") { "$PSScriptRoot\_Build\run-logs" } else { "$PSScriptRoot\logs" }
+
+# Keep one completed session beside the new session. The output/error pair from
+# each launch is useful for crash diagnosis; older pairs only accumulate.
+# Do not prune while another Kyty process may still be writing its log.
+function Remove-OldRunLogs([string]$directory) {
+	$exeName = [IO.Path]::GetFileNameWithoutExtension($Exe)
+	if (Get-Process -Name $exeName -ErrorAction SilentlyContinue) {
+		Write-Host 'logs: retention skipped while another Kyty process is running'
+		return
+	}
+	$sessions = @(
+		Get-ChildItem -LiteralPath $directory -Filter '*.log' -File -ErrorAction SilentlyContinue |
+		Where-Object { $_.Name -match '^\d{8}-\d{6}-\d{3}\.(out|err)\.log
+Write-Host "game:     $(if ($titleName) { "$titleName, " })$version$(if (!$tested) { " (untested: the emulator is tested with $($testedVersions -join ' and '))" })"
+Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
+Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $(if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs $($environment['KYTY_RENDER_CPUS'])" }))
+Write-Host "switches: $($environment.Count)"
+Write-Host "command:  $Exe $($quoted -join ' ')"
+if ($DryRun) { $environment.GetEnumerator() | ForEach-Object { "  $($_.Key)=$($_.Value)" }; return }
+
+# Shaders, from the seed file (every shader of the game) by the precompile program: the shader
+# prefetch's inputs for this GPU and driver (_PipelineCache\static\<title>_<version>.shaders; new shaders
+# are then translated in the background while playing), made when they are missing or stale (the first
+# launch, a driver update: half a minute on 22 CPUs); and the static pipeline cache, the whole game
+# compiled ahead by precompile-windows.ps1 (about 55 minutes on 22 CPUs), offered by -Prompt.
+$tool = Join-Path (Split-Path $Exe) 'kyty_shader_precompile.exe'
+# The seed file of this game version (Rename-TitleCaches).
+$seedName = if ($param -and $titleId -and $param.contentVersion) { "seeds-$($titleId)_$($param.contentVersion).seeds" } else { 'seeds.seeds' }
+$seeds = @("$PSScriptRoot\$seedName", "$PSScriptRoot\_Build\static-precompile\$seedName") | Where-Object { Test-Path $_ } | Select-Object -First 1
+# No seed file yet (a release has none: it holds the game's shader code): made from the game's files once by the
+# precompile program, as precompile-windows.ps1 makes it (--make-seeds, with the render-pass states of
+# pass-states.json; precompile.py seeds without Python).
+$passStates = "$PSScriptRoot\tools\local\static-precompile\pass-states.json"
+# One another program made (<file>.program: its size and time) is made again (a release unpacked over the last) and
+# replaced where it lists something else (precompile-windows.ps1 has the same).
+$programStamp = if (Test-Path $tool) { "$((Get-Item $tool).Length) $((Get-Item $tool).LastWriteTimeUtc.Ticks)" }
+$staleSeeds = $seeds -and $programStamp -and (!(Test-Path "$seeds.program") -or "$(Get-Content "$seeds.program" -Raw)".Trim() -ne $programStamp)
+if ((!$seeds -or $staleSeeds) -and !$Precompile -and (Test-Path $tool) -and (Test-Path $passStates)) {
+	$target = if ($seeds) { $seeds } elseif (Test-Path "$PSScriptRoot\_Build") { "$PSScriptRoot\_Build\static-precompile\$seedName" } else { "$PSScriptRoot\$seedName" }
+	$made = if ($staleSeeds) { "$target.new" } else { $target }
+	New-Item -ItemType Directory -Force (Split-Path $made) | Out-Null
+	Write-Host "shaders:  listing the game's shaders from its files $(if ($staleSeeds) { 'again (another precompile program)' } else { '(once)' })"
+	& $tool --game $Game --make-seeds $made --states $passStates | Out-Null
+	if ($LASTEXITCODE -eq 0 -and (Test-Path $made)) {
+		if ($staleSeeds -and (Get-FileHash $made).Hash -eq (Get-FileHash $target).Hash) { Remove-Item $made } elseif ($staleSeeds) { Move-Item -Force $made $target }
+		Set-Content "$target.program" $programStamp
+		$seeds = $target
+	} elseif (!$staleSeeds) {
+		Write-Host 'shaders:  listing failed: the game compiles its shaders when they first appear'
+	}
+}
+$shaders = !$Precompile -and $seeds -and (Test-Path $tool)
+# The precompile program on the launch's CPUs, its output in the console or a file: its exit code.
+function Invoke-Tool([string[]]$arguments, [string]$output = '') {
+	$parameters = @{ FilePath = $tool; WorkingDirectory = $PSScriptRoot; NoNewWindow = $true; PassThru = $true
+		ArgumentList = @('--game', "`"$Game`"", '--seeds', "`"$seeds`"") + $arguments }
+	if ($output) { $parameters['RedirectStandardOutput'] = $output }
+	$process = Start-Process @parameters
+	$null = $process.Handle # keeps the exit code readable
+	if ($mask -ne $all) { $process.ProcessorAffinity = [IntPtr]$mask }
+	$process.WaitForExit()
+	return $process.ExitCode
+}
+$inputsReady = $cacheReady = $false
+if ($shaders) {
+	$statusFile = [IO.Path]::GetTempFileName()
+	$shaders = (Invoke-Tool @('--status') $statusFile) -eq 0
+	$status = Get-Content $statusFile -Raw
+	Remove-Item $statusFile
+	$inputsReady = $status -match 'inputs current'
+	# A precompile that stopped before its last merge keeps its shards' checkpoints (small ones stay
+	# behind after a merge).
+	# Outdated: made from the seeds of an older precompile program, which listed fewer of the game's shaders.
+	$cacheOutdated = $status -match 'static cache outdated'
+	# A shard older than its store is left from an earlier run, not an unfinished one: another graphics driver's, which
+	# no merge takes (issue #126: six of them made every start offer the precompile again).
+	$unfinished = Get-ChildItem "$PSScriptRoot\_PipelineCache\static\*.shard*" -ErrorAction SilentlyContinue | Where-Object {
+		$store = Join-Path $_.DirectoryName ($_.Name -replace '\.shard.*$', '')
+		$_.Length -gt 1MB -and !((Test-Path -LiteralPath $store) -and (Get-Item -LiteralPath $store).LastWriteTime -gt $_.LastWriteTime)
+	}
+	$cacheReady = $status -match 'static cache current' -and !$unfinished
+	Write-Host "shaders:  prefetch inputs $(if ($inputsReady) { 'ready' } else { 'to be made' }), static pipeline cache $(if ($cacheReady) { 'ready' } elseif ($cacheOutdated) { 'out of date (precompile-windows.ps1 compiles what is new)' } else { 'not made (precompile-windows.ps1)' })"
+}
+
+# -Prompt: the game version and the precompile, before anything starts.
+$noPrompt = "$PSScriptRoot\no-precompile-prompt.txt"
+$offer = $shaders -and !$cacheReady -and !(Test-Path $noPrompt)
+if ($Prompt -and ($offer -or !$tested)) {
+	$info = "Game: $(if ($titleName) { $titleName } else { 'unknown' }) ($version)"
+	$info += if ($tested) { ', a tested version.' } else { "`n⚠ This version is untested (the emulator was tested with $($testedVersions -join ' and ')): it may not run or may fail." }
+	if ($offer) {
+		$minutes = [math]::Ceiling(55 * 22 / $cpus / 10) * 10
+		$time = if ($minutes -lt 90) { "about $minutes minutes" } else { 'about {0:N1} hours' -f ($minutes / 60) }
+		# (next precompile all: the precompiled shaders lack a translation that changes nearly every shader, issue #246.)
+		$message = if ($cacheOutdated -and $status -match 'next precompile all') {
+			"$info`n`nThis version of the emulator translates the game's shaders differently from the one that made the precompiled shaders on this PC (a newer translation), so a precompile now compiles all of them again, once: $time on this PC, with the CPU fully loaded (closing its window stops it, and the next run continues).`n" +
+				"Until then the current precompiled shaders stay in use: starting the game now is fine."
+		} elseif ($cacheOutdated) {
+			"$info`n`nThis version of the emulator precompiles more of the game's shaders than the one that made the precompiled shaders on this PC: the new ones would stutter the first time they appear.`n" +
+				"Precompiling again compiles only what is new (minutes; at most $time on this PC, with the CPU fully loaded; closing its window stops it, and the next run continues)."
+		} else {
+			"$info`n`nThe shaders are not precompiled for this graphics card yet: scenes and effects stutter the first time they appear in the game (a fraction of a second to a few seconds).`n" +
+				"The precompile compiles every shader of the game once: $time on this PC (with the CPU fully loaded; closing its window stops it, and the next run continues). " +
+				"It is needed only once, and again after a graphics driver update."
+		}
+		$choice, $never = Show-Choice $message @('Precompile first, then start the game', 'Start the game now', 'Quit') "Don't ask about precompiling again"
+		if ($never) { Set-Content $noPrompt 'run-windows.ps1 -Prompt: no precompile dialog (delete this file to get it back)' }
+		if ($choice -ne 0 -and $choice -ne 1) { Write-Host 'cancelled'; return }
+		if ($choice -eq 0) {
+			try {
+				& "$PSScriptRoot\precompile-windows.ps1" -Game $Game -Affinity $mask
+				$inputsReady = $true # the full run ends with them
+			} catch {
+				Write-Host "precompile failed ($($_.Exception.Message)); starting the game anyway"
+			}
+		}
+	} else {
+		$choice, $never = Show-Choice $info @('Start the game', 'Quit')
+		if ($choice -ne 0) { Write-Host 'cancelled'; return }
+	}
+}
+# Memory: Windows ends a program that asks for more than RAM and the page file can hold. The emulator
+# commits about 34 GB (the game's 13.5 GiB of PS5 memory, about 11 GB Windows sets aside to back the
+# video memory in use, the emulator's own). Under 24 GB of RAM it compiles no shaders or pipelines at
+# start-up and keeps its pipeline caches small: about 14 GB in use after a save loads at 1-1 (most of it
+# the game's own memory), of which play keeps using only a few GB (10-09: emptied after loading, the
+# working set grew back to 3.5 GB in a minute of play at 60 fps): with 16 GB Windows pages the rest out.
+$os = Get-CimInstance Win32_OperatingSystem
+[double]$ram = $os.TotalVisibleMemorySize * 1KB
+[double]$commit = $os.FreeVirtualMemory * 1KB
+if ((Get-CimInstance Win32_ComputerSystem).AutomaticManagedPagefile) {
+	# A system-managed page file grows to 3 x RAM (at most an eighth of its disk) while the disk has room.
+	$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
+	[double]$paged = (Get-CimInstance Win32_PageFileUsage | Measure-Object AllocatedBaseSize -Sum).Sum * 1MB
+	[double]$room = [math]::Min([math]::Min(3 * $ram, [double]$disk.Size / 8) - $paged, [double]$disk.FreeSpace - 5GB)
+	$commit += [math]::Max([double]0, $room)
+}
+$memory = @()
+if ($ram -lt 24GB) {
+	$memory += ("This PC has {0:N0} GB of RAM: the game runs, but loading takes longer (the emulator takes about 14 GB " +
+		"while a save loads and keeps using a few GB in play; 32 GB recommended).") -f ($ram / 1GB)
+}
+if ($commit -lt 34GB) {
+	$memory += ("Windows can give programs only {0:N0} GB more memory (RAM plus page file) and the emulator needs about 34 GB: " +
+		"it may close in the middle of the game. Close other programs, or set the page file to 'System managed size' " +
+		"(Settings > System > About > Advanced system settings > Performance > Settings > Advanced > Virtual memory).") -f ($commit / 1GB)
+}
+foreach ($line in $memory) { Write-Host "memory:   $line" }
+if ($memory -and $Prompt) {
+	$choice, $never = Show-Choice ($memory -join "`n`n") @('Start the game anyway', 'Quit')
+	if ($choice -ne 0) { Write-Host 'cancelled'; return }
+}
+
+if ($shaders -and !$inputsReady) {
+	Write-Host 'shaders:  making the background shader preparation inputs for this graphics card (first run or after a driver update: about a minute)'
+	if ((Invoke-Tool @('--no-pipelines', '--static-inputs', '--threads', "$cpus")) -ne 0) {
+		Write-Host 'shaders:  making them failed; no background shader preparation this time'
+	}
+}
+
+foreach ($entry in $environment.GetEnumerator()) { Set-Item "env:$($entry.Key)" $entry.Value }
+New-Item -ItemType Directory -Force $logDir | Out-Null
+$out = "$logDir\$stamp.out.log"
+$process = Start-Process -FilePath $Exe -ArgumentList $quoted -WorkingDirectory $PSScriptRoot -PassThru `
+	-RedirectStandardOutput $out -RedirectStandardError "$logDir\$stamp.err.log"
+if ($mask -ne $all) { $process.ProcessorAffinity = [IntPtr]$mask }
+$null = $process.Handle # keeps the exit code readable after the process ends
+Write-Host "pid $($process.Id); logs: $($logDir.Substring($PSScriptRoot.Length + 1))\$stamp.*.log"
+if (!$Precompile -and $Follow) {
+	# The run log in this window as it is written; the exit code (and the error log's end) when the game ends.
+	$reader = $null
+	$pending = ''
+	$show = {
+		$text = $reader.ReadToEnd()
+		if ($text) {
+			$lines = ($pending + $text) -split "`n"
+			$script:pending = $lines[-1]
+			for ($i = 0; $i -lt $lines.Count - 1; $i++) { Write-Host $lines[$i].TrimEnd("`r") }
+		}
+	}
+	while ($true) {
+		$exited = $process.HasExited
+		if (!$reader -and (Test-Path $out)) {
+			$reader = New-Object System.IO.StreamReader([System.IO.FileStream]::new($out, 'Open', 'Read', 'ReadWrite'))
+		}
+		if ($reader) { & $show }
+		if ($exited) { break }
+		Start-Sleep -Milliseconds 250
+	}
+	if ($pending) { Write-Host $pending }
+	if ($reader) { $reader.Dispose() }
+	Write-Host ''
+	Write-Host ("The game exited with code {0} (0x{0:X8}); logs: {1}\{2}.*.log" -f $process.ExitCode, $logDir, $stamp)
+	if ($process.ExitCode -ne 0) {
+		Get-Content "$logDir\$stamp.err.log" -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+	}
+	exit $process.ExitCode
+}
+if (!$Precompile) { return }
+
+# Precompile: follow the warmup progress until the emulator exits.
+$begin = Get-Date
+$shown = 0
+while (!$process.HasExited) {
+	Start-Sleep -Milliseconds 500
+	$lines = @(Get-Content $out -ErrorAction SilentlyContinue | Where-Object { $_ -match 'warmup|precompile|pipeline cache' })
+	for (; $shown -lt $lines.Count; $shown++) { Write-Host "  $($lines[$shown])" }
+}
+$lines = @(Get-Content $out -ErrorAction SilentlyContinue | Where-Object { $_ -match 'warmup|precompile|pipeline cache' })
+for (; $shown -lt $lines.Count; $shown++) { Write-Host "  $($lines[$shown])" }
+Write-Host ("exit code {0} after {1:N0} s" -f $process.ExitCode, ((Get-Date) - $begin).TotalSeconds)
+exit $process.ExitCode
+ } |
+		Group-Object { $_.Name.Substring(0, 19) } |
+		Sort-Object Name -Descending
+	)
+	$removed = 0
+	foreach ($session in ($sessions | Select-Object -Skip 1)) {
+		foreach ($file in $session.Group) {
+			Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+			if (!(Test-Path -LiteralPath $file.FullName)) { $removed++ }
+		}
+	}
+	if ($removed -gt 0) {
+		Write-Host "logs: removed $removed old output/error files; keeping the latest completed session"
+	}
+}
+Remove-OldRunLogs $logDir
+
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 Write-Host "game:     $(if ($titleName) { "$titleName, " })$version$(if (!$tested) { " (untested: the emulator is tested with $($testedVersions -join ' and '))" })"
 Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
