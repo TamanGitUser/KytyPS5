@@ -953,18 +953,19 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 			// for the game, FSR present, async compute and image acquire in one graphics+compute family.
 			// Keep the queue handles distinct: index 0 is Kyty's GPU queue, 1 its present/game queue,
 			// 2 FSR's present queue, 3 FSR async compute, and 4 FSR image acquire.
-			if (!fsr_queues && !compute_present_forced && graphics_present && families[queue_family].queueCount >= 5) {
+			if (!fsr_queues && !compute_present_forced && graphics_present &&
+			    families[queue_family].queueCount >= 5) {
 				queue_create_infos[0].queueCount = 5;
 				graphics.fsr_compute_family = queue_family;
 				graphics.fsr_present_family = queue_family;
 				graphics.fsr_compute_queue_index = 3;
 				graphics.fsr_acquire_queue_index = 4;
 				fsr_queues = true;
-				std::printf("Frame generation: FSR using five distinct queues from graphics family %u\\n", queue_family);
+				std::printf("Frame generation: FSR using five distinct queues from graphics family %u\n", queue_family);
 			}
 			if (!fsr_queues) {
 				std::printf("Frame generation: FSR needs three graphics queues and a compute family of two queues, or a compute "
-				            "family of three that can present: off\\n");
+				            "family of three that can present: off\n");
 			} else if (!graphics_present) {
 				std::printf("Frame generation: FSR's presents on compute family %u (its own queue there; issue #170)\n",
 				            graphics.fsr_compute_family);
