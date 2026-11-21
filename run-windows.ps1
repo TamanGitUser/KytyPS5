@@ -219,6 +219,7 @@ $titleId = if ($param) { $param.titleId } else { '' }
 $version = if ($param) { "$titleId $($param.contentVersion)" } else { 'unknown' }
 $titleName = if ($param) { $param.localizedParameters.($param.localizedParameters.defaultLanguage).titleName }
 $tested = $testedVersions -contains $version
+$testedVersionsText = $testedVersions -join ' and '
 
 $launch = Get-Content $Config -Raw | ConvertFrom-Json
 
@@ -476,7 +477,9 @@ function Remove-OldRunLogs([string]$directory) {
 	$sessions = @(
 		Get-ChildItem -LiteralPath $directory -Filter '*.log' -File -ErrorAction SilentlyContinue |
 		Where-Object { $_.Name -match '^\d{8}-\d{6}-\d{3}\.(out|err)\.log
-Write-Host "game:     $(if ($titleName) { "$titleName, " })$version$(if (!$tested) { " (untested: the emulator is tested with $($testedVersions -join ' and '))" })"
+$gameLabel = if ($titleName) { "$titleName, " } else { "" }
+$testedNote = if ($tested) { "" } else { " (untested: the emulator is tested with " + $testedVersionsText + ")" }
+Write-Host ("game:     " + $gameLabel + $version + $testedNote)
 Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
 Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $(if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs $($environment['KYTY_RENDER_CPUS'])" }))
 Write-Host "switches: $($environment.Count)"
@@ -552,7 +555,7 @@ $noPrompt = "$PSScriptRoot\no-precompile-prompt.txt"
 $offer = $shaders -and !$cacheReady -and !(Test-Path $noPrompt)
 if ($Prompt -and ($offer -or !$tested)) {
 	$info = "Game: $(if ($titleName) { $titleName } else { 'unknown' }) ($version)"
-	$info += if ($tested) { ', a tested version.' } else { "`n⚠ This version is untested (the emulator was tested with $($testedVersions -join ' and ')): it may not run or may fail." }
+	$info += if ($tested) { ', a tested version.' } else { "`n⚠ This version is untested (the emulator was tested with $testedVersionsText): it may not run or may fail." }
 	if ($offer) {
 		$minutes = [math]::Ceiling(55 * 22 / $cpus / 10) * 10
 		$time = if ($minutes -lt 90) { "about $minutes minutes" } else { 'about {0:N1} hours' -f ($minutes / 60) }
@@ -693,7 +696,9 @@ exit $process.ExitCode
 Remove-OldRunLogs $logDir
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-Write-Host "game:     $(if ($titleName) { "$titleName, " })$version$(if (!$tested) { " (untested: the emulator is tested with $($testedVersions -join ' and '))" })"
+$gameLabel = if ($titleName) { "$titleName, " } else { "" }
+$testedNote = if ($tested) { "" } else { " (untested: the emulator is tested with " + $testedVersionsText + ")" }
+Write-Host ("game:     " + $gameLabel + $version + $testedNote)
 Write-Host "config:   $Config$(if ($Precompile) { ' (precompile)' })"
 Write-Host ("affinity: 0x{0:X} ({1} CPUs){2}" -f $mask, $cpus, $(if ($environment['KYTY_RENDER_CPUS']) { "; render threads on CPUs $($environment['KYTY_RENDER_CPUS'])" }))
 Write-Host "switches: $($environment.Count)"
@@ -769,7 +774,7 @@ $noPrompt = "$PSScriptRoot\no-precompile-prompt.txt"
 $offer = $shaders -and !$cacheReady -and !(Test-Path $noPrompt)
 if ($Prompt -and ($offer -or !$tested)) {
 	$info = "Game: $(if ($titleName) { $titleName } else { 'unknown' }) ($version)"
-	$info += if ($tested) { ', a tested version.' } else { "`n⚠ This version is untested (the emulator was tested with $($testedVersions -join ' and ')): it may not run or may fail." }
+	$info += if ($tested) { ', a tested version.' } else { "`n⚠ This version is untested (the emulator was tested with $testedVersionsText): it may not run or may fail." }
 	if ($offer) {
 		$minutes = [math]::Ceiling(55 * 22 / $cpus / 10) * 10
 		$time = if ($minutes -lt 90) { "about $minutes minutes" } else { 'about {0:N1} hours' -f ($minutes / 60) }

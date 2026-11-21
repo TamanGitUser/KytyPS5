@@ -103,6 +103,22 @@ jobs:
         shell: cmd
         run: call launcher-windows\build.cmd || exit /b 1
 
+      # Parse with Windows PowerShell 5.1, the interpreter used by KytyLauncher.exe.
+      # This catches quoting/interpolation errors before a broken launcher script is packaged.
+      - name: Validate Windows PowerShell launcher script
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = (Resolve-Path 'run-windows.ps1').Path
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host $_.ToString() }
+            throw 'run-windows.ps1 failed Windows PowerShell 5.1 syntax validation.'
+          }
+          Write-Host 'run-windows.ps1: Windows PowerShell 5.1 syntax OK'
+
       - name: Package
         shell: pwsh
         env:
