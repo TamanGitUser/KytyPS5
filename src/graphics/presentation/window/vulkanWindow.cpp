@@ -885,7 +885,7 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	EXIT_IF(physical_device == nullptr);
 	EXIT_IF(queue_family == static_cast<uint32_t>(-1));
 
-	const float               queue_priorities[3] = {1.0f, 1.0f, 1.0f};
+	const float               queue_priorities[5] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 	vk::DeviceQueueCreateInfo queue_create_info {};
 	queue_create_info.sType            = vk::StructureType::eDeviceQueueCreateInfo;
 	queue_create_info.queueFamilyIndex = queue_family;
@@ -898,6 +898,8 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	graphics.readback_family                                    = static_cast<uint32_t>(-1);
 	graphics.fsr_compute_family                                 = static_cast<uint32_t>(-1);
 	graphics.fsr_present_family                                 = static_cast<uint32_t>(-1);
+	graphics.fsr_compute_queue_index                            = 0;
+	graphics.fsr_acquire_queue_index                             = 1;
 	bool fsr_queues                                             = false;
 #if defined(_WIN32)
 	// A second graphics-family queue for presents (GraphicContext::present_queue).
@@ -947,9 +949,22 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 				fsr_queues                  = true;
 				break;
 			}
+			// A separate compute-only family is preferred, but Vulkan also permits distinct queues
+			// for the game, FSR present, async compute and image acquire in one graphics+compute family.
+			// Keep the queue handles distinct: index 0 is Kyty's GPU queue, 1 its present/game queue,
+			// 2 FSR's present queue, 3 FSR async compute, and 4 FSR image acquire.
+			if (!fsr_queues && !compute_present_forced && graphics_present && families[queue_family].queueCount >= 5) {
+				queue_create_infos[0].queueCount = 5;
+				graphics.fsr_compute_family = queue_family;
+				graphics.fsr_present_family = queue_family;
+				graphics.fsr_compute_queue_index = 3;
+				graphics.fsr_acquire_queue_index = 4;
+				fsr_queues = true;
+				std::printf("Frame generation: FSR using five distinct queues from graphics family %u\\n", queue_family);
+			}
 			if (!fsr_queues) {
 				std::printf("Frame generation: FSR needs three graphics queues and a compute family of two queues, or a compute "
-				            "family of three that can present: off\n");
+				            "family of three that can present: off\\n");
 			} else if (!graphics_present) {
 				std::printf("Frame generation: FSR's presents on compute family %u (its own queue there; issue #170)\n",
 				            graphics.fsr_compute_family);
@@ -1979,10 +1994,13 @@ void WindowContext::CreateVulkan() {
 	}
 	if (graphic_ctx.fsr_compute_family != static_cast<uint32_t>(-1)) {
 		graphic_ctx.device.getQueue(graphic_ctx.fsr_present_family, 2, &graphic_ctx.fsr_present_queue);
-		graphic_ctx.device.getQueue(graphic_ctx.fsr_compute_family, 0, &graphic_ctx.fsr_compute_queue);
-		graphic_ctx.device.getQueue(graphic_ctx.fsr_compute_family, 1, &graphic_ctx.fsr_acquire_queue);
-		LOGF("\tFSR queues: present family %u index 2, compute and acquire family %u\n", graphic_ctx.fsr_present_family,
-		     graphic_ctx.fsr_compute_family);
+		graphic_ctx.device.getQueue(graphic_ctx.fsr_compute_family, graphic_ctx.fsr_compute_queue_index,
+		                            &graphic_ctx.fsr_compute_queue);
+		graphic_ctx.device.getQueue(graphic_ctx.fsr_compute_family, graphic_ctx.fsr_acquire_queue_index,
+		                            &graphic_ctx.fsr_acquire_queue);
+		LOGF("\tFSR queues: present family %u index 2, compute family %u indices %u/%u\n",
+		     graphic_ctx.fsr_present_family, graphic_ctx.fsr_compute_family,
+		     graphic_ctx.fsr_compute_queue_index, graphic_ctx.fsr_acquire_queue_index);
 	}
 	Libs::Graphics::FrameGen::OnDevice(graphic_ctx.instance, graphic_ctx.physical_device, graphic_ctx.device);
 	Libs::Graphics::FrameGen::OnFsrQueues(graphic_ctx);
