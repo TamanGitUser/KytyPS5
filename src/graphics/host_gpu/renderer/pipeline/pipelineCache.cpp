@@ -3711,6 +3711,32 @@ void PipelineCache::WarmScene(uint32_t scene, uint64_t compute_video, bool in_me
 		if (!in_memory)
 			for (const auto& words: programs.warm_recipes) only.insert(LocalShaderWarmup::RecipeKey(words));
 	}
+	// A known scene has a much smaller, relevant recipe set than the whole game. On small GPUs,
+	// give that set more of the memory the driver can currently spare, while keeping a fixed reserve
+	// for the game's textures and render targets. The broad start-up warmup keeps its conservative cap.
+	if (known) {
+		const char* value = std::getenv("KYTY_SCENE_WARMUP_VIDEO_MIB");
+		if (value != nullptr && *value != '\0') {
+			char* end = nullptr;
+			const auto requested_mib = std::strtoull(value, &end, 10);
+			if (end != value && *end == '\0' && requested_mib != 0 && requested_mib <= 2048 &&
+			    compute_video != UINT64_MAX) {
+				m_graphics.RefreshMemoryBudget();
+				const uint64_t budget = m_graphics.GetTotalMemoryBudget();
+				const uint64_t used = m_graphics.GetDeviceMemoryUsage();
+				constexpr uint64_t Reserve = uint64_t {512} << 20u;
+				const uint64_t free = budget > used ? budget - used : 0;
+				const uint64_t headroom = free > Reserve ? free - Reserve : 0;
+				const uint64_t requested = requested_mib << 20u;
+				const uint64_t adaptive = std::min(requested, headroom);
+				if (adaptive > compute_video) {
+					compute_video = adaptive;
+					PipelineCacheLog("Scene warmup: compute pipeline budget {} MiB ({} MiB free, {} MiB reserved)",
+					                 compute_video >> 20u, free >> 20u, Reserve >> 20u);
+				}
+			}
+		}
+	}
 	WarmPipelines(compute_video, true, known || !in_memory ? &only : nullptr);
 	if (!in_memory) {
 		Common::LockGuard lock(m_mutex);

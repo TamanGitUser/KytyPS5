@@ -8,7 +8,9 @@
     "KYTY_TABLE_XPR": "2",
     "KYTY_SCOUT": "0",
     "KYTY_GPU_CHECKPOINTS": "0",
-    "KYTY_FAULT_BINDINGS": "1"
+    "KYTY_FAULT_BINDINGS": "1",
+    "KYTY_SCENE_WARMUP": "1",
+    "KYTY_SCENE_WARMUP_VIDEO_MIB": "512"
   },
   "command": [
     "--",
