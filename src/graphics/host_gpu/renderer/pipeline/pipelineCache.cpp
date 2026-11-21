@@ -4402,12 +4402,17 @@ void PipelineCache::InitializeDriverCache() {
 		auto                        table_at   = std::chrono::steady_clock::now();
 		auto                        main_at    = table_at;
 		auto                        played_at  = table_at;
-		const auto settled = [&](const std::atomic<int64_t>& last_done, std::chrono::steady_clock::time_point saved_at) {
+		constexpr uint64_t SmallCheckpointLimit = uint64_t {512} << 20u;
+		const auto settled = [&](const std::atomic<int64_t>& last_done,
+		                         std::chrono::steady_clock::time_point saved_at, size_t saved_size) {
 			const auto now  = std::chrono::steady_clock::now();
 			const auto last = std::chrono::steady_clock::time_point(
 			    std::chrono::steady_clock::duration(last_done.load(std::memory_order_acquire)));
+			// Keep checkpointing a previously loaded small cache during a long compile burst, even
+			// without a static store. Once it grows beyond 512 MiB, wait for the burst to settle.
+			const bool small_cache = saved_size != 0 && saved_size <= SmallCheckpointLimit;
 			return now - last >= std::chrono::seconds(20) ||
-			       (store_sized && now - saved_at >= std::chrono::seconds(SmallSaveSeconds));
+			       ((store_sized || small_cache) && now - saved_at >= std::chrono::seconds(SmallSaveSeconds));
 		};
 		while (!stop.stop_requested()) {
 			{
@@ -4418,20 +4423,20 @@ void PipelineCache::InitializeDriverCache() {
 			if (stop.stop_requested()) break;
 			if (const auto done = m_table_pipelines_done.load(std::memory_order_acquire);
 			    done != saved && m_table_pipeline_jobs.load(std::memory_order_acquire) == 0 &&
-			    settled(m_table_pipeline_last_done, table_at)) {
+			    settled(m_table_pipeline_last_done, table_at, m_table_cache_saved_size)) {
 				std::lock_guard save(m_table_cache_mutex);
 				if (SaveDriverCache(m_table_cache, m_table_cache_path, m_table_cache_saved_size)) saved = done;
 				table_at = std::chrono::steady_clock::now();
 			}
 			if (const auto done = m_main_pipelines_done.load(std::memory_order_acquire);
-			    done != main_saved && settled(m_main_pipeline_last_done, main_at)) {
+			    done != main_saved && settled(m_main_pipeline_last_done, main_at, m_driver_cache_saved_size)) {
 				std::lock_guard save(m_main_cache_mutex);
 				if (SaveDriverCache(m_driver_cache, m_driver_cache_path, m_driver_cache_saved_size)) main_saved = done;
 				main_at = std::chrono::steady_clock::now();
 			}
 			// The pipelines kept of this session's compiles (none: nothing written), as both caches settle.
-			if (m_played != nullptr && settled(m_main_pipeline_last_done, played_at) &&
-			    settled(m_table_pipeline_last_done, played_at)) {
+			if (m_played != nullptr && settled(m_main_pipeline_last_done, played_at, m_driver_cache_saved_size) &&
+			    settled(m_table_pipeline_last_done, played_at, m_table_cache_saved_size)) {
 				(void)m_played->Save();
 				m_played->ReportChanged();
 				played_at = std::chrono::steady_clock::now();
