@@ -769,8 +769,8 @@ RenderExecutor::TableResult RenderExecutor::TableTry(CommandBuffer& buffer, std:
 	if (pair.refused) return Spec::Refuse("table: pair refused"), TableResult::Native;
 	// KYTY_FRAMEGEN: the frame's first G-buffer draw goes the normal way (or a native record's), whose hook reads the
 	// camera from its constants (a speculation's thread leaves them all to the GPU thread's).
-	if (FrameGen::Enabled() && pair.programs[0] != nullptr &&
-	    FrameGen::IsGbufferVertexShader(pair.programs[0]->shader_hash) && (Role() != 0 || FrameGen::WantsCamera()))
+	if (pair.programs[0] != nullptr &&
+	    FrameGen::ShouldCaptureCamera(pair.programs[0]->shader_hash, Role() != 0))
 		return Spec::Refuse("table: frame generation camera"), TableResult::Native;
 	// A store at most once a frame per pair and draw state, within the frame's budget (kyty_local_table_store_budget):
 	// while its programs and pipeline compile, the pair's draws take the normal path (Deferred). (Once a frame per pair
