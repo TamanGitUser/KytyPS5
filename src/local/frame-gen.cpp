@@ -125,6 +125,7 @@ bool     g_upscale     = false; // KYTY_UPSCALER=dlss: DLSS super resolution ask
 bool     g_upscale_ready = false; // ... and available on the device
 Camera   g_camera;              // Kyty.Gpu: the current guest frame
 std::atomic<bool> g_camera_found {false}; // read by the speculative table workers
+std::atomic<bool> g_camera_probe_claimed {false}; // one speculative draw per guest frame is enough to make the GPU thread capture the camera
 Sources  g_sources;             // Kyty.Gpu: the current guest frame
 uint64_t g_guest_frame = 0;     // Kyty.Gpu
 std::atomic<bool> g_scene {false}; // the current guest frame ran the TAA pass
@@ -291,12 +292,20 @@ bool IsDepthFormat(vk::Format format) {
 
 bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
 	if (!g_ready || hash == 0 || !WantsCamera()) return false;
-	// Once this frame's camera has been captured, these draws can use the speculative table path again.
-	// Only while the camera is missing must both normal and speculative draws be routed through OnDraw.
-	if (CameraShaderKnown(hash)) return true;
+	// The GPU thread can take the first eligible draw in guest order. Speculative workers, which run ahead of it, need
+	// reserve at most one such draw: refusing every G-buffer table draw until the GPU thread catches up creates thousands
+	// of holes and sends otherwise parallel work back through the serial render path.
+	const auto claim_speculative_probe = [&] {
+		if (!speculative) return true;
+		bool expected = false;
+		return g_camera_probe_claimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+		                                                       std::memory_order_relaxed);
+	};
+	if (CameraShaderKnown(hash)) return claim_speculative_probe();
 	const size_t priority = CameraPriorityProbeSlot(hash);
 	if (priority < CameraPriorityProbeHashes.size())
-		return g_camera_priority_attempts[priority].load(std::memory_order_relaxed) < CameraProbeAttempts;
+		return g_camera_priority_attempts[priority].load(std::memory_order_relaxed) < CameraProbeAttempts &&
+		       claim_speculative_probe();
 	// Speculative workers cannot inspect the CPU SRT. Probe ordinary unknown shaders only on Kyty.Gpu.
 	if (speculative) return false;
 	const size_t slot = CameraProbeSlot(hash);
@@ -2483,6 +2492,7 @@ void PrepareInputs(GraphicContext& graphics, TextureCache& cache, CommandBuffer&
 	g_sources.valid    = false;
 	g_camera.valid     = false;
 	g_camera_found.store(false, std::memory_order_release);
+	g_camera_probe_claimed.store(false, std::memory_order_release);
 	++g_guest_frame;
 	// The camera comes from the G-buffer's vertex shaders (OnDraw). A view without them (the Nexus floor looked down at,
 	// a wall close up: issue #241) takes the last one seen since the last cut, held still (its previous matrix the same:
