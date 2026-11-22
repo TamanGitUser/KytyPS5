@@ -1,7 +1,7 @@
 {
   "environment": {
-    "KYTY_VULKAN_RECORDING": "0",
-    "KYTY_DEFERRED_SUBMIT": "0",
+    "KYTY_VULKAN_RECORDING": "1",
+    "KYTY_DEFERRED_SUBMIT": "1",
     "KYTY_SPECULATE": "4",
     "KYTY_PIPELINE_BINARIES": "0",
     "KYTY_TABLE_DISPATCH": "1",
@@ -17,7 +17,8 @@
     "KYTY_SCENE_WARMUP_CACHE_ONLY": "1",
     "KYTY_TABLE_LEARN_PORTABLE": "2",
     "KYTY_FLIP_RATE": "0",
-    "KYTY_RENDER_CPUS": "1,2,3,4,5"
+    "KYTY_RENDER_CPUS": "1,2,3,4,5",
+    "KYTY_RECORDING_CPUS": "1,2,3,4,5"
   },
   "command": [
     "--",
