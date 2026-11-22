@@ -16,11 +16,13 @@
     "KYTY_SCENE_WARMUP_CACHE_ONLY": "1",
     "KYTY_TABLE_LEARN_PORTABLE": "2",
     "KYTY_FLIP_RATE": "0",
-    "KYTY_RENDER_CPUS": "auto",
-    "KYTY_RECORDING_CPUS": "auto",
+    "KYTY_RENDER_CPUS": "1,2,3,4,5",
+    "KYTY_RECORDING_CPUS": "1,2,3,4,5",
     "KYTY_READBACK_QUEUE": "1",
     "KYTY_FSR_ASYNC": "0",
-    "KYTY_READBACK_INFLIGHT": "1"
+    "KYTY_READBACK_INFLIGHT": "0",
+    "KYTY_SPECULATE_CPUS": "6,7,8,9",
+    "KYTY_SPEC_PASS_CPUS": "10,11"
   },
   "command": [
     "--",

@@ -338,12 +338,11 @@ if ($Gpu) { $environment['KYTY_GPU'] = $Gpu; $env:KYTY_GPU = $Gpu }
 if ($Aspect -and $Aspect -ne '16:9') { $environment['KYTY_RENDER_ASPECT'] = $Aspect }
 # -Quality low|lowest: Demon's Souls engine settings that cut what a frame draws, for PCs whose CPU limits the frame
 # rate (each draw costs the emulator CPU time). This Maxwell profile keeps the 480-line LOD and 60 m sun-shadow
-# distance but leaves ambient, cascade and spot shadows plus projected decals enabled, so objects retain their lighting
-# and contact details. lowest remains the more aggressive diagnostic option: it also disables those visual effects.
-# Not r_forceShadowLOD: it draws objects with their shadow meshes, and objects without one vanish (carts and barricades
-# at the Gates of Boletaria; issue #40).
+# distance, with ambient, cascade and spot shadows enabled. Low disables projected decals only (blood/scorch marks),
+# avoiding their thousands of extra draws without removing object lighting. Lowest remains the diagnostic ceiling that
+# also disables ambient, spot and cascade shadows. Not r_forceShadowLOD: it can make objects without shadow meshes vanish.
 $qualityConvars = @{
-	low    = 'r_forceViewportHeightForPixelSizeCalc=480;sunShadowMaxDistance=60'
+	low    = 'r_forceViewportHeightForPixelSizeCalc=480;sunShadowMaxDistance=60;r_projectedDecalEnable=false'
 	lowest = 'r_forceViewportHeightForPixelSizeCalc=480;sunShadowMaxDistance=60;r_enableAmbientShadowing=false;r_enableSpotShadows=false;r_projectedDecalEnable=false;r_enableCascadeShadows=false'
 }
 if ($Quality -and $Quality -ne 'standard') {

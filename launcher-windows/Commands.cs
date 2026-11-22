@@ -102,7 +102,7 @@ sealed class Commands {
 		if (height > 0) arguments.AddRange(new[] { "-RenderHeight", Number(height) });
 		if (wide) arguments.AddRange(new[] { "-Aspect", ratio });
 		var quality = S.Str("quality").ToLowerInvariant();
-		if (quality == "low" || quality == "lowest") arguments.AddRange(new[] { "-Quality", quality, "-TextureReduce", quality == "lowest" ? "2" : "1" });
+		if (quality == "low" || quality == "lowest") arguments.AddRange(new[] { "-Quality", quality, "-TextureReduce", "2" });
 		var fsrOn = context.FsrAvailable && S.Bool("fsr");
 		if (fsrOn) arguments.Add("-Fsr");
 		var frameGen = S.Int("framegen");

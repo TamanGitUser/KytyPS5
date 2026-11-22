@@ -19,7 +19,7 @@
   "safegpu": true,
   "upscaler": "",
   "render_dlss": 360,
-  "fsr": true,
+  "fsr": false,
   "output": "1080p",
   "lowlatency": true,
   "ui_language": "en",
