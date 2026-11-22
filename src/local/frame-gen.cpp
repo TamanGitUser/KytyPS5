@@ -259,7 +259,7 @@ bool CameraSrtLooksValid(std::span<const uint32_t> srt) {
 	const float jitter_y = AsFloat(srt[SrtJitter + 1]);
 	return std::isfinite(jitter_x) && std::isfinite(jitter_y) &&
 	       std::fabs(jitter_x) <= 0.1f && std::fabs(jitter_y) <= 0.1f &&
-	       CameraMatrixLooksValid(current) && CameraMatrixLooksValid(previous);
+	       CameraMatrixLooksValid(current);
 }
 
 bool HasStencil(vk::Format format) {
@@ -2358,6 +2358,11 @@ void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 		g_camera.prev_view_proj[4 + i]  = AsFloat(srt[SrtPrevViewProj + 4 + i]);
 		g_camera.prev_view_proj[8 + i]  = g_camera.view_proj[8 + i];
 		g_camera.prev_view_proj[12 + i] = AsFloat(srt[SrtPrevViewProj + 8 + i]);
+	}
+	// A camera cut or a different area's G-buffer can leave the previous matrix unset. The game's
+	// motion vectors still describe object motion; use the current camera as a safe zero camera delta.
+	if (!CameraMatrixLooksValid(g_camera.prev_view_proj)) {
+		g_camera.prev_view_proj = g_camera.view_proj;
 	}
 	g_camera.jitter_ndc = {AsFloat(srt[SrtJitter]), AsFloat(srt[SrtJitter + 1])};
 	g_camera.valid      = true;
