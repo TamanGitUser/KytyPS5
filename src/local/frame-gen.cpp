@@ -188,8 +188,10 @@ size_t CameraProbeSlot(uint64_t hash) {
 		auto& slot = g_camera_probe_hashes[(start + n) & (CameraProbeSlots - 1)];
 		auto  found = slot.load(std::memory_order_relaxed);
 		if (found == hash) return (start + n) & (CameraProbeSlots - 1);
-		if (found == 0 && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed))
-			return (start + n) & (CameraProbeSlots - 1);
+		if (found == 0) {
+			if (slot.compare_exchange_strong(found, hash, std::memory_order_relaxed) || found == hash)
+				return (start + n) & (CameraProbeSlots - 1);
+		}
 	}
 	return CameraProbeSlots;
 }
