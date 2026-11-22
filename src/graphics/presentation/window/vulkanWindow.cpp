@@ -1001,6 +1001,11 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 			}
 		}
 	}
+	if (graphics.readback_family != static_cast<uint32_t>(-1)) {
+		std::printf("Readback copies: dedicated transfer-only queue family %u\\n", graphics.readback_family);
+	} else if (readback != nullptr && *readback != '\0' && std::strcmp(readback, "0") != 0) {
+		std::printf("Readback copies: graphics queue (no separate transfer-only family found)\\n");
+	}
 
 	vk::PhysicalDeviceColorWriteEnableFeaturesEXT color_write_ext {};
 	color_write_ext.sType = vk::StructureType::ePhysicalDeviceColorWriteEnableFeaturesEXT;
