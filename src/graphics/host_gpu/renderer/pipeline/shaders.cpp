@@ -1235,7 +1235,9 @@ void CreatePipelineInternal(
 		                     fragment_components > limits.maxFragmentInputComponents ||
 		                     limits.maxGeometryOutputVertices < 3u);
 
-		geometry_shader_module = ModuleStore::AddCached(geometry_shader_spirv);
+		// Keep per-pipeline module identities when diagnostic key/source logs are active.
+		geometry_shader_module =
+		    ModuleSpirvHashesRecorded() ? nullptr : ModuleStore::AddCached(geometry_shader_spirv);
 		if (geometry_shader_module == nullptr) {
 			vk::ShaderModuleCreateInfo geometry_create {};
 			geometry_create.codeSize = geometry_shader_spirv.size() * sizeof(uint32_t);
