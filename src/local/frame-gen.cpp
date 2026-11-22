@@ -154,6 +154,17 @@ float AsFloat(uint32_t word) {
 
 constexpr size_t CameraProbeSlots = 64;
 constexpr size_t CameraShaderSlots = 16;
+constexpr std::array<uint64_t, 2> CameraPriorityProbeHashes {
+	0x74ef69e2a97e0273ull, 0xbcb050070a482db3ull
+};
+constexpr uint32_t CameraProbeAttempts = 16;
+std::array<std::atomic<uint32_t>, CameraPriorityProbeHashes.size()> g_camera_priority_attempts {};
+
+size_t CameraPriorityProbeSlot(uint64_t hash) {
+	for (size_t i = 0; i < CameraPriorityProbeHashes.size(); ++i)
+		if (CameraPriorityProbeHashes[i] == hash) return i;
+	return CameraPriorityProbeHashes.size();
+}
 std::array<std::atomic<uint64_t>, CameraProbeSlots> g_camera_probe_hashes {};
 std::array<std::atomic<uint64_t>, CameraShaderSlots> g_camera_shader_hashes {};
 std::array<std::atomic<uint32_t>, CameraProbeSlots> g_camera_probe_attempts {};
@@ -285,11 +296,15 @@ bool IsDepthFormat(vk::Format format) {
 bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
 	if (!g_ready || hash == 0) return false;
 	if (CameraShaderKnown(hash)) return speculative || WantsCamera();
-	// Speculative workers cannot inspect the CPU SRT, so they must route each bounded candidate
-	// through the GPU thread even while the previous frame's camera is still marked valid.
-	if (!speculative && !WantsCamera()) return false;
+	const size_t priority = CameraPriorityProbeSlot(hash);
+	if (priority < CameraPriorityProbeHashes.size())
+		return g_camera_priority_attempts[priority].load(std::memory_order_relaxed) < CameraProbeAttempts;
+	// Speculative workers cannot inspect the CPU SRT. Probe ordinary unknown shaders only when
+	// Kyty.Gpu knows the current frame still needs a camera; the priority hashes above are the
+	// new area's pipelines observed immediately before FSR lost its camera input.
+	if (speculative || !WantsCamera()) return false;
 	const size_t slot = CameraProbeSlot(hash);
-	return slot < CameraProbeSlots && g_camera_probe_attempts[slot].load(std::memory_order_relaxed) < 16;
+	return slot < CameraProbeSlots && g_camera_probe_attempts[slot].load(std::memory_order_relaxed) < CameraProbeAttempts;
 }
 
 void Transition(vk::CommandBuffer command, VulkanImage& image, vk::ImageAspectFlags aspect,
@@ -2328,18 +2343,25 @@ void SetStaticRect(float x0, float y0, float x1, float y1) {
 
 void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 	if (g_camera.valid) return;
+	const size_t priority = CameraPriorityProbeSlot(vs_hash);
 	size_t probe_slot = CameraProbeSlots;
-	if (!CameraShaderKnown(vs_hash)) {
+	if (!CameraShaderKnown(vs_hash) && priority == CameraPriorityProbeHashes.size()) {
 		probe_slot = CameraProbeSlot(vs_hash);
 		if (probe_slot == CameraProbeSlots) return;
 	}
 	if (srt.size() < SrtJitter + 2) {
-		if (probe_slot < CameraProbeSlots) g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+		if (priority < CameraPriorityProbeHashes.size())
+			g_camera_priority_attempts[priority].fetch_add(1, std::memory_order_relaxed);
+		else if (probe_slot < CameraProbeSlots)
+			g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
 		return;
 	}
-	if (probe_slot < CameraProbeSlots) {
+	if (priority < CameraPriorityProbeHashes.size() || probe_slot < CameraProbeSlots) {
 		if (!CameraSrtLooksValid(srt)) {
-			g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+			if (priority < CameraPriorityProbeHashes.size())
+				g_camera_priority_attempts[priority].fetch_add(1, std::memory_order_relaxed);
+			else
+				g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
 			return;
 		}
 		if (CameraHashInsert(g_camera_shader_hashes, vs_hash)) {
