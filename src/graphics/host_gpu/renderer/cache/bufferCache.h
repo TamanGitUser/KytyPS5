@@ -580,7 +580,8 @@ private:
 	// The graphics tick a transfer-queue copy of `ranges` ({begin, end}) waits for; false when
 	// the copy must drain the graphics queue as before.
 	[[nodiscard]] bool ReadbackQueueReady(std::span<const std::pair<uint64_t, uint64_t>> ranges,
-	                                      bool between_commands, uint64_t& wait_tick);
+	                                      bool between_commands, uint64_t& wait_tick,
+	                                      bool allow_inflight = false);
 	std::vector<GpuWrite> m_gpu_writes;
 	size_t                m_gpu_writes_head    = 0;
 	size_t                m_gpu_writes_stamped = 0;
