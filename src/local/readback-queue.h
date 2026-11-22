@@ -1,9 +1,9 @@
 #pragma once
 // KYTY_READBACK_QUEUE: guest readback copies of GPU data that is already written run on a
-// transfer-only queue (the copy engine). A copy waits on the graphics timeline only for the
-// last GPU write of the bytes it reads, instead of queueing behind everything submitted to the
-// single graphics queue (a guest reading data written frames ago otherwise waits for the whole
-// in-flight frame). Buffers are then shared by both queue families (VK_SHARING_MODE_CONCURRENT).
+// separate queue, preferably a transfer-only family (the copy engine), otherwise a spare queue
+// from the graphics family. A copy waits on the graphics timeline only for the last GPU write of
+// the bytes it reads, instead of queueing behind everything submitted to the graphics queue.
+// Buffers are shared between queue families only when the readback queue is in another family.
 //
 // This queue is not ordered with the graphics command stream, only with the graphics timeline.
 // With deferred submits (KYTY_DEFERRED_SUBMIT) the recording worker records the copy and submits
