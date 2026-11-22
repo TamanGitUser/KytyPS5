@@ -896,6 +896,7 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	std::array<vk::DeviceQueueCreateInfo, 3> queue_create_infos {queue_create_info, queue_create_info, queue_create_info};
 	uint32_t                                 queue_create_count = 1;
 	graphics.readback_family                                    = static_cast<uint32_t>(-1);
+	graphics.readback_queue_index                                = 0;
 	graphics.fsr_compute_family                                 = static_cast<uint32_t>(-1);
 	graphics.fsr_present_family                                 = static_cast<uint32_t>(-1);
 	graphics.fsr_compute_queue_index                            = 0;
