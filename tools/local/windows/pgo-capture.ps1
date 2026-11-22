@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $exe = Join-Path $root 'kyty_emulator.exe'
 $pgoExe = Join-Path $PSScriptRoot 'kyty_emulator_pgo.exe'
 $backup = Join-Path $PSScriptRoot 'kyty_emulator.release-backup.exe'
@@ -23,6 +23,7 @@ if ($profile -match '\s') {
 }
 
 New-Item -ItemType Directory -Force $logs | Out-Null
+[System.IO.File]::WriteAllText($liveFile, "id 0" + [Environment]::NewLine, [System.Text.Encoding]::ASCII)
 if (Test-Path -LiteralPath $profile) { Remove-Item -LiteralPath $profile -Force }
 Copy-Item -LiteralPath $exe -Destination $backup
 
