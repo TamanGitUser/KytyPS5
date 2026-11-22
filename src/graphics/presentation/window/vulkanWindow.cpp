@@ -1007,8 +1007,12 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 		// No transfer-only family: use a spare queue of the graphics family. Queues in the same
 		// family need no ownership transfer; the graphics timeline still orders the copies after
 		// the last writer. The queue count includes the game's, presenter's and FSR's queues above.
+		uint32_t spare_family_count = 0;
+		physical_device.getQueueFamilyProperties(&spare_family_count, nullptr);
+		std::vector<vk::QueueFamilyProperties> spare_families(spare_family_count);
+		physical_device.getQueueFamilyProperties(&spare_family_count, spare_families.data());
 		const uint32_t index = queue_create_infos[0].queueCount;
-		if (queue_family < families.size() && families[queue_family].queueCount > index) {
+		if (queue_family < spare_family_count && spare_families[queue_family].queueCount > index) {
 			queue_create_infos[0].queueCount = index + 1;
 			graphics.readback_family = queue_family;
 			graphics.readback_queue_index = index;
