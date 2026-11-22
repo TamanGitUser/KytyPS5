@@ -2319,7 +2319,7 @@ void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 		if (CameraHashInsert(g_camera_shader_hashes, vs_hash)) {
 			static std::atomic<uint32_t> reported {0};
 			if (reported.fetch_add(1, std::memory_order_relaxed) < 8) {
-				std::printf("Frame generation: found a camera SRT on unlisted VS 0x%016llx\\n",
+				std::printf("Frame generation: found a camera SRT on unlisted VS 0x%016llx\n",
 				            static_cast<unsigned long long>(vs_hash));
 			}
 		}
