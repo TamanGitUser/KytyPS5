@@ -342,7 +342,7 @@ if ($Aspect -and $Aspect -ne '16:9') { $environment['KYTY_RENDER_ASPECT'] = $Asp
 # avoiding their thousands of extra draws without removing object lighting. Lowest remains the diagnostic ceiling that
 # also disables ambient, spot and cascade shadows. Not r_forceShadowLOD: it can make objects without shadow meshes vanish.
 $qualityConvars = @{
-	low    = 'r_forceViewportHeightForPixelSizeCalc=360;sunShadowMaxDistance=40;r_projectedDecalEnable=false'
+	low    = 'r_forceViewportHeightForPixelSizeCalc=360;sunShadowMaxDistance=30;r_projectedDecalEnable=false'
 	lowest = 'r_forceViewportHeightForPixelSizeCalc=480;sunShadowMaxDistance=60;r_enableAmbientShadowing=false;r_enableSpotShadows=false;r_projectedDecalEnable=false;r_enableCascadeShadows=false'
 }
 if ($Quality -and $Quality -ne 'standard') {

@@ -118,6 +118,7 @@ public:
 		}
 		m_handle                = Atrac9GetHandle();
 		m_num_frames            = 0;
+		m_lost_frames           = 0;
 		m_total_decoded_samples = 0;
 		m_superframe_bytes_remain =
 		    (m_is_initialized ? static_cast<uint32_t>(m_codec_info.superframeSize) : 0);
@@ -188,16 +189,8 @@ public:
 				break;
 			}
 
-			int       bytes_used = 0;
-			const int ret        = DecodeFrame(input_bytes + input_offset, &bytes_used);
-			if (ret != 0) {
-				result.result          = AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL;
-				result.internal_result = ret;
-				break;
-			}
-			if (bytes_used <= 0 || static_cast<size_t>(bytes_used) > remaining_input ||
-			    static_cast<uint32_t>(bytes_used) > m_superframe_bytes_remain) {
-				result.result = AJM_RESULT_CODEC_ERROR | AJM_RESULT_INVALID_DATA;
+			int bytes_used = 0;
+			if (!NextFrame(input_bytes + input_offset, remaining_input, &bytes_used, &result)) {
 				break;
 			}
 
@@ -363,6 +356,7 @@ private:
 
 		m_is_initialized          = true;
 		m_num_frames              = 0;
+		m_lost_frames             = 0;
 		m_total_decoded_samples   = 0;
 		m_superframe_bytes_remain = static_cast<uint32_t>(m_codec_info.superframeSize);
 		SetFormat(static_cast<uint32_t>(m_codec_info.channels),
@@ -382,6 +376,76 @@ private:
 			return DecodeChannelsFrame(input, bytes_used);
 		}
 		return DecodeWith(m_handle, input, m_pcm_buffer.data(), bytes_used);
+	}
+
+	// LibAtrac9 rejects a small number of otherwise playable Demon's Souls haptic frames. The
+	// game's audio worker treats any AJM codec error as fatal, so keep the failed frame and the
+	// rest of its superframe silent, then restart the decoder for the next superframe.
+	bool NextFrame(const uint8_t* input, size_t remaining_input, int* bytes_used,
+	               AjmDecodeResult* result) {
+		const auto frames_in_superframe = static_cast<uint32_t>(m_codec_info.framesInSuperframe);
+		if (m_lost_frames == 0) {
+			const int ret = DecodeFrame(input, bytes_used);
+			if (ret == 0 && *bytes_used > 0 &&
+			    static_cast<size_t>(*bytes_used) <= remaining_input &&
+			    static_cast<uint32_t>(*bytes_used) <= m_superframe_bytes_remain) {
+				return true;
+			}
+			const bool unpack_error = (static_cast<uint32_t>(ret) & 0xff000000u) == 0x82000000u;
+			if (ret != 0 && !unpack_error) {
+				result->result          = AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL;
+				result->internal_result = ret;
+				return false;
+			}
+			if (ret == 0 && (*bytes_used <= 0 || static_cast<size_t>(*bytes_used) > remaining_input)) {
+				result->result = AJM_RESULT_CODEC_ERROR | AJM_RESULT_INVALID_DATA;
+				return false;
+			}
+			if (frames_in_superframe == 0 || m_num_frames >= frames_in_superframe) {
+				result->result = AJM_RESULT_CODEC_ERROR | AJM_RESULT_INVALID_DATA;
+				return false;
+			}
+			const uint32_t config = (uint32_t {m_config_data[0]} << 24u) |
+			                        (uint32_t {m_config_data[1]} << 16u) |
+			                        (uint32_t {m_config_data[2]} << 8u) | m_config_data[3];
+			static std::atomic<uint32_t> reports {0};
+			if (reports.fetch_add(1, std::memory_order_relaxed) < 32) {
+				LOGF("AJM ATRAC9 [HACK]: frame %u/%u in superframe played as silence; status=0x%08x "
+				     "config=0x%08x\n",
+				     m_num_frames + 1, frames_in_superframe, static_cast<uint32_t>(ret), config);
+			}
+			m_lost_frames = frames_in_superframe - m_num_frames;
+		}
+
+		std::fill(m_pcm_buffer.begin(), m_pcm_buffer.end(), uint8_t {0});
+		*bytes_used = --m_lost_frames == 0 ? static_cast<int>(m_superframe_bytes_remain) : 0;
+		if (m_lost_frames == 0 && frames_in_superframe > 1) {
+			const int restarted = RestartStreams();
+			if (restarted != 0) {
+				result->result          = AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL;
+				result->internal_result = restarted;
+				return false;
+			}
+		}
+		return true;
+	}
+
+	int RestartStreams() {
+		if (m_channel_handles.empty()) {
+			return m_handle != nullptr ? Atrac9InitDecoder(m_handle, m_config_data) : -1;
+		}
+		At9MultiConfig multi {};
+		if (!At9ParseMultiConfig(m_config_data, &multi)) {
+			return -1;
+		}
+		for (auto* handle: m_channel_handles) {
+			const int ret = Atrac9InitDecoder(handle, multi.mono);
+			if (ret != 0) {
+				return ret;
+			}
+		}
+		std::fill(m_channel_used.begin(), m_channel_used.end(), 0);
+		return 0;
 	}
 
 	int DecodeWith(void* handle, const uint8_t* input, uint8_t* pcm, int* bytes_used) const {
@@ -530,16 +594,8 @@ private:
 				return;
 			}
 
-			int       bytes_used = 0;
-			const int ret        = DecodeFrame(input + *input_offset, &bytes_used);
-			if (ret != 0) {
-				result->result          = AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL;
-				result->internal_result = ret;
-				return;
-			}
-			if (bytes_used <= 0 || static_cast<size_t>(bytes_used) > remaining_input ||
-			    static_cast<uint32_t>(bytes_used) > m_superframe_bytes_remain) {
-				result->result = AJM_RESULT_CODEC_ERROR | AJM_RESULT_INVALID_DATA;
+			int bytes_used = 0;
+			if (!NextFrame(input + *input_offset, remaining_input, &bytes_used, result)) {
 				return;
 			}
 
@@ -633,6 +689,7 @@ private:
 	uint8_t              m_config_data[ATRAC9_CONFIG_DATA_SIZE] {};
 	uint32_t             m_superframe_bytes_remain = 0;
 	uint32_t             m_num_frames              = 0;
+	uint32_t             m_lost_frames             = 0;
 	Atrac9CodecInfo      m_codec_info {};
 	std::vector<uint8_t> m_pcm_buffer;
 	// A multichannel stream (At9ParseMultiConfig): a mono decoder per channel, the bytes each channel used of the
