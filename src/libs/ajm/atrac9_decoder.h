@@ -419,7 +419,7 @@ private:
 
 		std::fill(m_pcm_buffer.begin(), m_pcm_buffer.end(), uint8_t {0});
 		*bytes_used = --m_lost_frames == 0 ? static_cast<int>(m_superframe_bytes_remain) : 0;
-		if (m_lost_frames == 0 && frames_in_superframe > 1) {
+		if (m_lost_frames == 0 && (frames_in_superframe > 1 || !m_channel_handles.empty())) {
 			const int restarted = RestartStreams();
 			if (restarted != 0) {
 				result->result          = AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL;
