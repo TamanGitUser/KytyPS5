@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $profile = Join-Path $PSScriptRoot 'mode4.profraw'
 $liveFile = Join-Path $root 'logs\live-commands.txt'
 
