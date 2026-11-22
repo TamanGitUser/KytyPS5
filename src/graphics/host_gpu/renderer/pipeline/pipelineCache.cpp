@@ -3980,7 +3980,7 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 		programs.warm_phase.store(2, std::memory_order_release);
 	}
 
-	std::atomic<size_t> next {0}, computes {0}, left {0};
+	std::atomic<size_t> next {0}, computes {0}, left {0}, cache_checks {0};
 	// Retained pipelines leave a 512 MiB reserve. Cache-only warmup has one worker and releases each
 	// compute pipeline immediately, so its transient floor can be lower without accumulating VRAM objects.
 	constexpr uint64_t Reserve = uint64_t {512} << 20u;
@@ -4008,7 +4008,9 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 			auto  pipeline = std::make_unique<Pipeline>();
 			if (job.compute) {
 				if (compute_full.load(std::memory_order_relaxed)) { ++left; continue; }
-				if (cache_only_compute) {
+				// The pipeline is released immediately after creation; sample every four transient builds
+				// instead of querying the driver budget for every recipe.
+				if (cache_only_compute && (cache_checks.fetch_add(1, std::memory_order_relaxed) + 1) % 4 == 0) {
 					m_graphics.RefreshMemoryBudget();
 					const auto budget = m_graphics.GetTotalMemoryBudget();
 					const auto used = m_graphics.GetDeviceMemoryUsage();
