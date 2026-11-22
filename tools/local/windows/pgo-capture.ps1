@@ -39,19 +39,23 @@ try {
 	Write-Host 'Then load the same gameplay area, play normally for a few minutes, and run pgo-save.cmd.'
 	Write-Host 'The pgo-save command writes the profile and closes the emulator.'
 	$process = Start-Process -FilePath $launcher -WorkingDirectory $root -PassThru
-	while (!$process.HasExited) {
-		$running = Get-Process -Name kyty_emulator -ErrorAction SilentlyContinue
-		if ((Test-Path -LiteralPath $profile) -and !$running) {
-			# The pgo live command has written the profile and quick-exited the emulator.
-			# Close only the launcher started by this script so the release exe can be restored.
-			Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+	# The launcher may exit or reopen itself after starting the emulator. Monitor Kyty directly,
+	# rather than assuming the launcher's own process stays alive for the whole capture.
+	$startup = [System.Diagnostics.Stopwatch]::StartNew()
+	$started = $false
+	while ($startup.Elapsed -lt [TimeSpan]::FromMinutes(5)) {
+		if (Get-Process -Name kyty_emulator -ErrorAction SilentlyContinue) {
+			$started = $true
 			break
 		}
 		Start-Sleep -Seconds 1
 	}
-	$process.WaitForExit()
+	if (!$started) { throw 'Kyty did not start within five minutes. The release emulator will be restored.' }
 	while (Get-Process -Name kyty_emulator -ErrorAction SilentlyContinue) {
 		Start-Sleep -Seconds 1
+	}
+	if ($process -and !$process.HasExited) {
+		Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
 	}
 }
 finally {
