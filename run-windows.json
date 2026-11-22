@@ -21,7 +21,9 @@
     "KYTY_READBACK_QUEUE": "1",
     "KYTY_FSR_ASYNC": "1",
     "KYTY_SPECULATE_CPUS": "6,7,8,9",
-    "KYTY_SPEC_PASS_CPUS": "10,11"
+    "KYTY_SPEC_PASS_CPUS": "10,11",
+    "KYTY_STALL_DUMP_MS": "70",
+    "KYTY_STALL_DUMP_SUSTAINED": "1"
   },
   "command": [
     "--",
