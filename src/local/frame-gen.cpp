@@ -124,7 +124,6 @@ bool     g_fsr_native  = false; // Linux KYTY_FRAMEGEN_BACKEND=fsr: FSR 3 built 
 bool     g_upscale     = false; // KYTY_UPSCALER=dlss: DLSS super resolution asked for (Streamline loaded for it)
 bool     g_upscale_ready = false; // ... and available on the device
 Camera   g_camera;              // Kyty.Gpu: the current guest frame
-std::atomic<bool> g_camera_found {false}; // visible to speculative table workers
 Sources  g_sources;             // Kyty.Gpu: the current guest frame
 uint64_t g_guest_frame = 0;     // Kyty.Gpu
 std::atomic<bool> g_scene {false}; // the current guest frame ran the TAA pass
@@ -156,6 +155,7 @@ constexpr size_t CameraProbeSlots = 64;
 constexpr size_t CameraShaderSlots = 16;
 std::array<std::atomic<uint64_t>, CameraProbeSlots> g_camera_probe_hashes {};
 std::array<std::atomic<uint64_t>, CameraShaderSlots> g_camera_shader_hashes {};
+std::array<std::atomic<uint32_t>, CameraProbeSlots> g_camera_probe_attempts {};
 
 template <size_t N>
 bool CameraHashContains(const std::array<std::atomic<uint64_t>, N>& hashes, uint64_t hash) {
@@ -167,6 +167,19 @@ bool CameraHashContains(const std::array<std::atomic<uint64_t>, N>& hashes, uint
 		if (found == 0) return false;
 	}
 	return false;
+}
+
+size_t CameraProbeSlot(uint64_t hash) {
+	if (hash == 0) return CameraProbeSlots;
+	const size_t start = static_cast<size_t>((hash ^ (hash >> 32u)) * 0x9e3779b97f4a7c15ull) & (CameraProbeSlots - 1);
+	for (size_t n = 0; n < CameraProbeSlots; ++n) {
+		auto& slot = g_camera_probe_hashes[(start + n) & (CameraProbeSlots - 1)];
+		auto  found = slot.load(std::memory_order_relaxed);
+		if (found == hash) return (start + n) & (CameraProbeSlots - 1);
+		if (found == 0 && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed))
+			return (start + n) & (CameraProbeSlots - 1);
+	}
+	return CameraProbeSlots;
 }
 
 template <size_t N>
@@ -268,13 +281,14 @@ bool IsDepthFormat(vk::Format format) {
 
 } // namespace
 
-bool ShouldCaptureCamera(uint64_t hash) {
-	if (!g_ready || hash == 0 || !WantsCamera()) return false;
-	if (CameraShaderKnown(hash)) return true;
-	// Both speculative and normal table draws must be declined while this frame has no camera:
-	// speculative workers cannot inspect the CPU SRT, so the draw is replayed on Kyty.Gpu.
-	// A bounded candidate set lets OnDraw validate the matrices there, on every later draw too.
-	return CameraHashContains(g_camera_probe_hashes, hash) || CameraHashInsert(g_camera_probe_hashes, hash);
+bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
+	if (!g_ready || hash == 0) return false;
+	if (CameraShaderKnown(hash)) return speculative || WantsCamera();
+	// Speculative workers cannot inspect the CPU SRT, so they must route each bounded candidate
+	// through the GPU thread even while the previous frame's camera is still marked valid.
+	if (!speculative && !WantsCamera()) return false;
+	const size_t slot = CameraProbeSlot(hash);
+	return slot < CameraProbeSlots && g_camera_probe_attempts[slot].load(std::memory_order_relaxed) < 16;
 }
 
 void Transition(vk::CommandBuffer command, VulkanImage& image, vk::ImageAspectFlags aspect,
@@ -1664,7 +1678,7 @@ std::string RefusedDeviceAdvice() {
 }
 
 bool WantsCamera() {
-	return g_ready && !g_camera_found.load(std::memory_order_acquire);
+	return g_ready && !g_camera.valid;
 }
 
 bool InputsGathered() {
@@ -2312,11 +2326,21 @@ void SetStaticRect(float x0, float y0, float x1, float y1) {
 }
 
 void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
-	if (g_camera.valid || srt.size() < SrtJitter + 2) return;
+	if (g_camera.valid) return;
+	size_t probe_slot = CameraProbeSlots;
 	if (!CameraShaderKnown(vs_hash)) {
-		if (!CameraHashContains(g_camera_probe_hashes, vs_hash) &&
-		    !CameraHashInsert(g_camera_probe_hashes, vs_hash)) return;
-		if (!CameraSrtLooksValid(srt)) return;
+		probe_slot = CameraProbeSlot(vs_hash);
+		if (probe_slot == CameraProbeSlots) return;
+	}
+	if (srt.size() < SrtJitter + 2) {
+		if (probe_slot < CameraProbeSlots) g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+	if (probe_slot < CameraProbeSlots) {
+		if (!CameraSrtLooksValid(srt)) {
+			g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
 		if (CameraHashInsert(g_camera_shader_hashes, vs_hash)) {
 			static std::atomic<uint32_t> reported {0};
 			if (reported.fetch_add(1, std::memory_order_relaxed) < 8) {
@@ -2337,7 +2361,6 @@ void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 	}
 	g_camera.jitter_ndc = {AsFloat(srt[SrtJitter]), AsFloat(srt[SrtJitter + 1])};
 	g_camera.valid      = true;
-	g_camera_found.store(true, std::memory_order_release);
 }
 
 void NoteScene() {
@@ -2434,7 +2457,6 @@ void PrepareInputs(GraphicContext& graphics, TextureCache& cache, CommandBuffer&
 	auto       camera  = g_camera;
 	g_sources.valid    = false;
 	g_camera.valid     = false;
-	g_camera_found.store(false, std::memory_order_release);
 	++g_guest_frame;
 	// The camera comes from the G-buffer's vertex shaders (OnDraw). A view without them (the Nexus floor looked down at,
 	// a wall close up: issue #241) takes the last one seen since the last cut, held still (its previous matrix the same:
