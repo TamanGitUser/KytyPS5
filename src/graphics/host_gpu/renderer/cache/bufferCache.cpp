@@ -535,6 +535,7 @@ static void TraceGpuWrite(uint64_t vaddr, uint64_t size, uint64_t tick) {
 }
 
 void BufferCache::ResetGpuWrites() {
+	++m_gpu_write_batch_epoch;
 	m_gpu_writes_base += m_gpu_writes.size(); // (the counters' last numbers stay below it)
 	m_gpu_writes.clear();
 	m_gpu_writes_head = m_gpu_writes_stamped = 0;
@@ -618,12 +619,17 @@ void BufferCache::NoteGpuWrite(uint64_t vaddr, uint64_t size) {
 		ResetGpuWrites();
 		m_gpu_writes_from = UINT64_MAX;
 	}
-	// Writes not stamped yet all get the same tick at the next point between commands: a range
-	// noted again before then (a dispatch run writing the same buffers) adds nothing.
-	for (size_t i = m_gpu_writes.size(), last = std::max(m_gpu_writes_stamped, i > 4 ? i - 4 : 0); i > last; --i)
-		if (m_gpu_writes[i - 1].begin == vaddr && m_gpu_writes[i - 1].end == vaddr + size) return;
-	const bool big = ((vaddr + size - 1) >> GpuWriteGranuleBits) - (vaddr >> GpuWriteGranuleBits) >= GpuWriteSpan;
-	m_gpu_writes.push_back({vaddr, vaddr + size, big});
+	// Writes not stamped yet all get the same tick at the next point between commands. The
+	// exact-range memo catches repeats even when other buffers' writes occur between them. Its
+	// epoch is advanced when that batch is stamped or the log is reset, so a memo never outlives
+	// the write record that makes skipping the duplicate safe.
+	const uint64_t end  = vaddr + size;
+	const uint64_t hash = (vaddr ^ (end << 24u)) * 0x9e3779b97f4a7c15ull;
+	auto&          recent = m_recent_gpu_writes[hash >> 56u];
+	if (recent.epoch == m_gpu_write_batch_epoch && recent.begin == vaddr && recent.end == end) return;
+	recent = {vaddr, end, m_gpu_write_batch_epoch};
+	const bool big = ((end - 1) >> GpuWriteGranuleBits) - (vaddr >> GpuWriteGranuleBits) >= GpuWriteSpan;
+	m_gpu_writes.push_back({vaddr, end, big});
 	if (big) {
 		m_gpu_big_writes.push_back(m_gpu_writes_base + m_gpu_writes.size() - 1);
 	} else {
@@ -649,6 +655,7 @@ uint64_t BufferCache::InflightWriteTick(uint64_t begin, uint64_t end, uint64_t c
 			else
 				m_gpu_write_stamps.emplace_back(end, current);
 			m_gpu_writes_stamped = m_gpu_writes.size();
+			++m_gpu_write_batch_epoch;
 		}
 		if (m_gpu_writes_from == UINT64_MAX) m_gpu_writes_from = current;
 	}

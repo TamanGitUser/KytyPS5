@@ -554,6 +554,9 @@ private:
 		uint64_t begin, end;
 		bool     big = false; // spans more granules than GpuWriteSpan: in m_gpu_big_writes, not m_gpu_write_last
 	};
+	struct RecentGpuWrite {
+		uint64_t begin = 0, end = 0, epoch = 0;
+	};
 	// The ticks of the stamped writes, oldest first: (end, tick) dates the writes numbered from the previous entry's end
 	// (the head's number for the first) up to `end`. (A tick in every entry: each was written once and read once more,
 	// a pass over thousands of cold entries a frame.)
@@ -583,9 +586,12 @@ private:
 	                                      bool between_commands, uint64_t& wait_tick,
 	                                      bool allow_inflight = false);
 	std::vector<GpuWrite> m_gpu_writes;
-	size_t                m_gpu_writes_head    = 0;
-	size_t                m_gpu_writes_stamped = 0;
-	bool                  m_gpu_writes_on      = false;
+	// Exact-range memo for the current unstamped batch; direct-map collisions only lose a skip.
+	std::array<RecentGpuWrite, 256> m_recent_gpu_writes {};
+	uint64_t                        m_gpu_write_batch_epoch = 1;
+	size_t                          m_gpu_writes_head = 0;
+	size_t                          m_gpu_writes_stamped = 0;
+	bool                            m_gpu_writes_on = false;
 	// Writes before this tick were not noted (UINT64_MAX: set at the next stamp).
 	uint64_t              m_gpu_writes_from    = UINT64_MAX;
 	// Last copy-engine value, and last graphics tick, that wrote each download slot: a detached
