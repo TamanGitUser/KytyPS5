@@ -885,7 +885,7 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 	EXIT_IF(physical_device == nullptr);
 	EXIT_IF(queue_family == static_cast<uint32_t>(-1));
 
-	const float               queue_priorities[5] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+	const float               queue_priorities[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 	vk::DeviceQueueCreateInfo queue_create_info {};
 	queue_create_info.sType            = vk::StructureType::eDeviceQueueCreateInfo;
 	queue_create_info.queueFamilyIndex = queue_family;
