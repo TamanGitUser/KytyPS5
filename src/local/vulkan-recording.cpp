@@ -53,7 +53,7 @@ namespace LocalVulkanRecording {
 namespace {
 constexpr size_t ChunkBytes = 64 * 1024;
 // Deep enough that a burst of recorded calls never blocks the producer in WaitForRoom.
-constexpr size_t ChunkCount = 64;
+constexpr size_t ChunkCount = 128;
 constexpr uint32_t End = std::numeric_limits<uint32_t>::max();
 vk::detail::DispatchLoaderDynamic original;
 
