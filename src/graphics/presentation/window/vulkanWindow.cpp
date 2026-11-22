@@ -2170,7 +2170,8 @@ bool CreateHeadlessGraphicContext(GraphicContext& graphic_ctx) {
 	graphic_ctx.queue_family = queue_family;
 	graphic_ctx.device.getQueue(queue_family, 0, &graphic_ctx.queue);
 	if (graphic_ctx.readback_family != static_cast<uint32_t>(-1))
-		graphic_ctx.device.getQueue(graphic_ctx.readback_family, 0, &graphic_ctx.readback_queue);
+		graphic_ctx.device.getQueue(graphic_ctx.readback_family, graphic_ctx.readback_queue_index,
+		                            &graphic_ctx.readback_queue);
 	return graphic_ctx.queue != nullptr && graphic_ctx.CreateAllocator();
 }
 
