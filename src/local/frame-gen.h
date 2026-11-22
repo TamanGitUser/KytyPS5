@@ -208,7 +208,7 @@ void NoteCentred();
 // which its flip takes (PrepareInputs).
 [[nodiscard]] bool InputsGathered();
 // The table path leaves camera-bearing draws to the normal/native path until their SRT is captured.
-[[nodiscard]] bool ShouldCaptureCamera(uint64_t vertex_shader_hash, bool speculative);
+[[nodiscard]] bool ShouldCaptureCamera(uint64_t vertex_shader_hash);
 void OnDraw(uint64_t vs_hash, std::span<const uint32_t> flattened_srt);
 void OnDispatch(uint64_t cs_hash, ImageId depth, uint64_t depth_address, ImageId motion,
                 uint64_t motion_address);

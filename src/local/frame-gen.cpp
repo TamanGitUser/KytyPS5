@@ -124,6 +124,7 @@ bool     g_fsr_native  = false; // Linux KYTY_FRAMEGEN_BACKEND=fsr: FSR 3 built 
 bool     g_upscale     = false; // KYTY_UPSCALER=dlss: DLSS super resolution asked for (Streamline loaded for it)
 bool     g_upscale_ready = false; // ... and available on the device
 Camera   g_camera;              // Kyty.Gpu: the current guest frame
+std::atomic<bool> g_camera_found {false}; // visible to speculative table workers
 Sources  g_sources;             // Kyty.Gpu: the current guest frame
 uint64_t g_guest_frame = 0;     // Kyty.Gpu
 std::atomic<bool> g_scene {false}; // the current guest frame ran the TAA pass
@@ -267,13 +268,13 @@ bool IsDepthFormat(vk::Format format) {
 
 } // namespace
 
-bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
-	if (!g_ready || hash == 0) return false;
-	if (CameraShaderKnown(hash)) return speculative || WantsCamera();
-	if (speculative || !WantsCamera()) return false;
-	// A bounded number of distinct unlisted vertex shaders are tried once. The first matching perspective
-	// SRT is remembered and then receives the same per-frame treatment as the known G-buffer shaders.
-	return CameraHashInsert(g_camera_probe_hashes, hash);
+bool ShouldCaptureCamera(uint64_t hash) {
+	if (!g_ready || hash == 0 || !WantsCamera()) return false;
+	if (CameraShaderKnown(hash)) return true;
+	// Both speculative and normal table draws must be declined while this frame has no camera:
+	// speculative workers cannot inspect the CPU SRT, so the draw is replayed on Kyty.Gpu.
+	// A bounded candidate set lets OnDraw validate the matrices there, on every later draw too.
+	return CameraHashContains(g_camera_probe_hashes, hash) || CameraHashInsert(g_camera_probe_hashes, hash);
 }
 
 void Transition(vk::CommandBuffer command, VulkanImage& image, vk::ImageAspectFlags aspect,
@@ -1663,7 +1664,7 @@ std::string RefusedDeviceAdvice() {
 }
 
 bool WantsCamera() {
-	return g_ready && !g_camera.valid;
+	return g_ready && !g_camera_found.load(std::memory_order_acquire);
 }
 
 bool InputsGathered() {
@@ -2336,6 +2337,7 @@ void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 	}
 	g_camera.jitter_ndc = {AsFloat(srt[SrtJitter]), AsFloat(srt[SrtJitter + 1])};
 	g_camera.valid      = true;
+	g_camera_found.store(true, std::memory_order_release);
 }
 
 void NoteScene() {
@@ -2432,6 +2434,7 @@ void PrepareInputs(GraphicContext& graphics, TextureCache& cache, CommandBuffer&
 	auto       camera  = g_camera;
 	g_sources.valid    = false;
 	g_camera.valid     = false;
+	g_camera_found.store(false, std::memory_order_release);
 	++g_guest_frame;
 	// The camera comes from the G-buffer's vertex shaders (OnDraw). A view without them (the Nexus floor looked down at,
 	// a wall close up: issue #241) takes the last one seen since the last cut, held still (its previous matrix the same:
