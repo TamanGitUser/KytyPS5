@@ -704,7 +704,7 @@ uint64_t BufferCache::InflightWriteTick(uint64_t begin, uint64_t end, uint64_t c
 }
 
 bool BufferCache::ReadbackQueueReady(std::span<const std::pair<uint64_t, uint64_t>> ranges,
-                                     bool between_commands, uint64_t& wait_tick) {
+                                     bool between_commands, uint64_t& wait_tick, bool allow_inflight) {
 	const auto mode = kyty_local_readback_queue_mode.load(std::memory_order_relaxed);
 	if (mode == 0 || m_graphics.readback_queue == nullptr || !m_gpu_writes_on) return false;
 	auto& master = m_scheduler.GetMasterSemaphore();
@@ -715,11 +715,21 @@ bool BufferCache::ReadbackQueueReady(std::span<const std::pair<uint64_t, uint64_
 		producer = std::max(producer, InflightWriteTick(begin, end, completed, between_commands));
 	// Writes before the log started are dated only once everything recorded then completed.
 	if (m_gpu_writes_from == UINT64_MAX || completed < m_gpu_writes_from) return false;
-	// An unfinished writer of the bytes: the graphics queue copies them after it.
-	if (producer != 0) return false;
+	// An unfinished writer normally stays on the graphics queue. The synchronous-download path may opt in
+	// only after it has stamped the current command and only when deferred submit keeps the writer's submit
+	// ahead of the transfer-queue wait on the same recording stream.
+	if (producer != 0 && !allow_inflight) return false;
+	if (producer == UINT64_MAX) return false;
+	if (allow_inflight) {
+#ifdef KYTY_LOCAL_VULKAN_RECORDING
+		if (!LocalVulkanRecording::DeferredSubmitEnabled()) return false;
+#else
+		return false;
+#endif
+	}
 	if (!m_readback_queue) m_readback_queue = std::make_unique<ReadbackQueue::Queue>(m_graphics);
 	LiveCounters::Add(LiveCounters::RbQueueDone);
-	wait_tick = completed;
+	wait_tick = producer != 0 ? producer : completed;
 	return true;
 }
 
@@ -1385,7 +1395,22 @@ void BufferCache::DownloadBufferMemory(std::span<const DownloadCopy> copies) {
 		std::vector<std::pair<uint64_t, uint64_t>> ranges;
 		ranges.reserve(batch.size());
 		for (const auto& copy: batch) ranges.emplace_back(copy.address, copy.address + copy.size);
-		if (uint64_t wait_tick = 0; ReadbackQueueReady(ranges, false, wait_tick)) {
+		uint64_t wait_tick = 0;
+		bool     queue_ready = ReadbackQueueReady(ranges, false, wait_tick);
+		bool     submit_current_writer = false;
+#ifdef KYTY_LOCAL_VULKAN_RECORDING
+		static const bool allow_inflight_readback = [] {
+			const char* value = std::getenv("KYTY_READBACK_INFLIGHT");
+			return value != nullptr && value[0] == '1';
+		}();
+		if (!queue_ready && allow_inflight_readback && LocalVulkanRecording::DeferredSubmitEnabled()) {
+			// Stamp writes from the open command as one tick. The transfer submit is queued after its
+			// graphics submit by the same deferred recorder and waits only for that writer tick.
+			queue_ready = ReadbackQueueReady(ranges, true, wait_tick, true);
+			submit_current_writer = queue_ready && wait_tick >= m_scheduler.CurrentTick();
+		}
+#endif
+		if (queue_ready) {
 			std::vector<ReadbackQueue::Queue::Region> regions;
 			regions.reserve(batch.size());
 			for (const auto& copy: batch) {
@@ -1394,11 +1419,20 @@ void BufferCache::DownloadBufferMemory(std::span<const DownloadCopy> copies) {
 				cursor += AlignDownload(envelope_size);
 			}
 			download.Commit();
+			if (submit_current_writer) {
+				m_scheduler.Finish();
+				static std::atomic<uint32_t> reports {0};
+				if (reports.fetch_add(1, std::memory_order_relaxed) < 8) {
+					std::printf("Readback copies: transfer queue waiting on in-flight graphics tick %llu\\n",
+					            static_cast<unsigned long long>(wait_tick));
+				}
+			}
 			if (LiveTrace::WriteTicks())
 				for (const auto& copy: batch)
 					LiveTrace::Event(LiveTrace::SyncReadback, copy.address, copy.size | m_scheduler.CurrentTick() << 32u);
+			const bool wait_done = m_scheduler.GetMasterSemaphore().KnownGpuTick() >= wait_tick;
 			m_readback_queue->Wait(m_readback_queue->Copy(regions, download.Handle(),
-			                                              m_scheduler.GetMasterSemaphore().Handle(), wait_tick));
+			                                              m_scheduler.GetMasterSemaphore().Handle(), wait_tick, wait_done));
 			m_scheduler.WaitPriorityOperations(wait_tick);
 		} else {
 			for (const auto& copy: batch) {
