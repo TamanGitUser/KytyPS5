@@ -2010,7 +2010,8 @@ void WindowContext::CreateVulkan() {
 		LOGF("\tpresent queue: family %u index 1\n", queue_family);
 	}
 	if (graphic_ctx.readback_family != static_cast<uint32_t>(-1)) {
-		graphic_ctx.device.getQueue(graphic_ctx.readback_family, 0, &graphic_ctx.readback_queue);
+		graphic_ctx.device.getQueue(graphic_ctx.readback_family, graphic_ctx.readback_queue_index,
+		                            &graphic_ctx.readback_queue);
 		EXIT_IF(graphic_ctx.readback_queue == nullptr);
 		DeviceFault::NoteQueue(graphic_ctx.readback_queue, "readback");
 	}
