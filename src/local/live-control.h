@@ -814,11 +814,14 @@ inline void StallWatch(int64_t threshold_ns) {
 	LocalPlatform::SetThreadName("Kyty.StallWatch");
 	int64_t stall = 0;
 	int     dumps = 0;
+	const bool sustained = std::getenv("KYTY_STALL_DUMP_SUSTAINED") != nullptr;
+	auto last_sustained_sample = std::chrono::steady_clock::time_point {};
 	for (;;) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		const int64_t since = g_render_idle_since.load(std::memory_order_relaxed);
 		if (since == 0) continue;
-		const int64_t idle = std::chrono::steady_clock::now().time_since_epoch().count() - since;
+		const auto now = std::chrono::steady_clock::now();
+		const int64_t idle = now.time_since_epoch().count() - since;
 		if (since != stall) {
 			stall = since;
 			dumps = 0;
@@ -828,9 +831,16 @@ inline void StallWatch(int64_t threshold_ns) {
 		if (flips < 120) continue;
 		const int64_t last  = g_flip_times[(flips - 1) % FlipTimes].load(std::memory_order_relaxed);
 		const int64_t first = g_flip_times[(flips - 61) % FlipTimes].load(std::memory_order_relaxed);
-		if ((last - first) / 60 > 50'000'000 || since - last > 50'000'000) {
+		if (!sustained && ((last - first) / 60 > 50'000'000 || since - last > 50'000'000)) {
 			dumps = 3; // (a loading screen or a pause: not play)
 			continue;
+		}
+		if (sustained) {
+			// A low-FPS workload can keep the render thread idle for most of every frame. Sample
+			// the game threads at most once per 1.5 s so the diagnostic does not dominate the run.
+			if (last_sustained_sample.time_since_epoch().count() != 0 &&
+			    now - last_sustained_sample < std::chrono::milliseconds(1500)) continue;
+			last_sustained_sample = now;
 		}
 		++dumps;
 		LocalPlatform::PrepareSampling();
