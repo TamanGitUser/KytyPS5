@@ -308,6 +308,10 @@ std::atomic<uint64_t> g_end {0};
 std::shared_mutex     g_mutex;
 std::vector<Entry>    g_entries;
 std::atomic<uint64_t> g_live {0}, g_spirv_bytes {0}, g_stored_bytes {0}, g_loads {0}, g_load_misses {0};
+// Geometry fallback modules recur across pipeline variants. Intern exact SPIR-V blobs so Maxwell does not
+// repeatedly write, compress and load the same generated geometry stage from the scratch store.
+std::mutex g_cached_mutex;
+std::unordered_map<uint64_t, std::vector<vk::ShaderModule>> g_cached_modules;
 // The last modules loaded: a module's pipelines are mostly made one after another.
 struct Recent {
 	size_t                                       index = SIZE_MAX;
@@ -363,6 +367,29 @@ vk::ShaderModule Add(const std::vector<uint32_t>& spirv) {
 vk::ShaderModule AddFrom(uint64_t file, uint64_t offset, uint32_t stored, uint32_t words, bool compressed) {
 	if (!Enabled() || file == 0 || words == 0) return nullptr;
 	return Push({file, offset, stored, words, compressed});
+}
+
+vk::ShaderModule AddCached(const std::vector<uint32_t>& spirv) {
+	if (!Enabled() || spirv.empty()) return nullptr;
+	const uint64_t hash = XXH3_64bits(spirv.data(), spirv.size() * sizeof(uint32_t));
+	std::lock_guard lock(g_cached_mutex);
+	auto& bucket = g_cached_modules[hash];
+	for (const auto module: bucket) {
+		const auto cached = Load(module);
+		if (cached != nullptr && cached->size() == spirv.size() &&
+		    std::equal(cached->begin(), cached->end(), spirv.begin())) {
+			// The cache keeps the reference created by Add; this one belongs to the pipeline being built.
+			g_live.fetch_add(1, std::memory_order_relaxed);
+			return module;
+		}
+	}
+	const auto module = Add(spirv);
+	if (module != nullptr && Holds(module)) {
+		// Keep Add's reference as the cache's pin; the caller receives a separate reference.
+		g_live.fetch_add(1, std::memory_order_relaxed);
+		bucket.push_back(module);
+	}
+	return module;
 }
 
 bool Holds(vk::ShaderModule module) {
@@ -1208,11 +1235,14 @@ void CreatePipelineInternal(
 		                     fragment_components > limits.maxFragmentInputComponents ||
 		                     limits.maxGeometryOutputVertices < 3u);
 
-		vk::ShaderModuleCreateInfo geometry_create {};
-		geometry_create.codeSize = geometry_shader_spirv.size() * sizeof(uint32_t);
-		geometry_create.pCode    = geometry_shader_spirv.data();
-		EXIT_NOT_IMPLEMENTED(graphics.device.createShaderModule(
-		                         &geometry_create, nullptr, &geometry_shader_module) != vk::Result::eSuccess);
+		geometry_shader_module = ModuleStore::AddCached(geometry_shader_spirv);
+		if (geometry_shader_module == nullptr) {
+			vk::ShaderModuleCreateInfo geometry_create {};
+			geometry_create.codeSize = geometry_shader_spirv.size() * sizeof(uint32_t);
+			geometry_create.pCode    = geometry_shader_spirv.data();
+			EXIT_NOT_IMPLEMENTED(graphics.device.createShaderModule(
+			                         &geometry_create, nullptr, &geometry_shader_module) != vk::Result::eSuccess);
+		}
 		geometry_shader_stage_info.stage  = vk::ShaderStageFlagBits::eGeometry;
 		geometry_shader_stage_info.module = geometry_shader_module;
 		geometry_shader_stage_info.pName  = "main";
@@ -1626,7 +1656,7 @@ void CreatePipelineInternal(
 		graphics.device.destroyShaderModule(tess_eval_shader_module, nullptr);
 	}
 	if (geometry_shader_module != nullptr) {
-		graphics.device.destroyShaderModule(geometry_shader_module, nullptr);
+		DestroyShaderModule(graphics.device, geometry_shader_module);
 	}
 }
 
