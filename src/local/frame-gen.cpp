@@ -967,7 +967,7 @@ bool FsrEnsureFrameGeneration(vk::Extent2D render) {
 	                                 &ffxQueryDescFrameGenerationGetGPUMemoryUsage::gpuMemoryUsageFrameGeneration);
 	const auto swapchain = FsrMemory(&s.swapchain_context, FFX_API_QUERY_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_GPU_MEMORY_USAGE_VK,
 	                                 &ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageVK::gpuMemoryUsageFrameGenerationSwapchain);
-	std::printf("Frame generation: FSR ready (%ux%u, render up to %ux%u; frame generation %s%s%s; async workloads %s)\\n",
+	std::printf("Frame generation: FSR ready (%ux%u, render up to %ux%u; frame generation %s%s%s; async workloads %s)\n",
 	            s.display.width, s.display.height, s.max_render.width, s.max_render.height, provider.c_str(), memory.c_str(),
 	            swapchain.empty() ? "" : ("; its swapchain" + swapchain).c_str(),
 	            async_workloads ? "on" : "off");
