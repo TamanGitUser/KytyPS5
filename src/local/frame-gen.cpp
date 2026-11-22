@@ -921,6 +921,14 @@ void FsrDestroyFrameGeneration() {
 }
 
 // The frame generation context for render sizes up to `render` (made again for a larger one).
+static bool FsrAsyncWorkloadsEnabled() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_FSR_ASYNC");
+		return value != nullptr && std::atoi(value) != 0;
+	}();
+	return enabled;
+}
+
 bool FsrEnsureFrameGeneration(vk::Extent2D render) {
 	auto& s = g_fsr_state;
 	if (s.fg_context != nullptr && render.width <= s.max_render.width && render.height <= s.max_render.height) return true;
@@ -935,7 +943,10 @@ bool FsrEnsureFrameGeneration(vk::Extent2D render) {
 	create.header.type  = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
 	create.header.pNext = s.sdk2 ? &version.header : backend.Header();
 	// The game's depth: reversed-Z with an infinite far plane (Decompose); its vectors at the render size.
+	// Async workloads require both this context flag and allowAsyncWorkloads in each Configure.
+	const bool async_workloads = FsrAsyncWorkloadsEnabled() && s.graphics->fsr_compute_queue != nullptr;
 	create.flags = FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED | FFX_FRAMEGENERATION_ENABLE_DEPTH_INFINITE;
+	if (async_workloads) create.flags |= FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
 	if (std::getenv("KYTY_FRAMEGEN_DEBUG") != nullptr) create.flags |= FFX_FRAMEGENERATION_ENABLE_DEBUG_CHECKING;
 	create.displaySize      = {s.display.width, s.display.height};
 	s.max_render            = {std::max(render.width, s.display.width), std::max(render.height, s.display.height)};
@@ -956,9 +967,10 @@ bool FsrEnsureFrameGeneration(vk::Extent2D render) {
 	                                 &ffxQueryDescFrameGenerationGetGPUMemoryUsage::gpuMemoryUsageFrameGeneration);
 	const auto swapchain = FsrMemory(&s.swapchain_context, FFX_API_QUERY_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_GPU_MEMORY_USAGE_VK,
 	                                 &ffxQueryFrameGenerationSwapChainGetGPUMemoryUsageVK::gpuMemoryUsageFrameGenerationSwapchain);
-	std::printf("Frame generation: FSR ready (%ux%u, render up to %ux%u; frame generation %s%s%s)\n", s.display.width,
-	            s.display.height, s.max_render.width, s.max_render.height, provider.c_str(), memory.c_str(),
-	            swapchain.empty() ? "" : ("; its swapchain" + swapchain).c_str());
+	std::printf("Frame generation: FSR ready (%ux%u, render up to %ux%u; frame generation %s%s%s; async workloads %s)\\n",
+	            s.display.width, s.display.height, s.max_render.width, s.max_render.height, provider.c_str(), memory.c_str(),
+	            swapchain.empty() ? "" : ("; its swapchain" + swapchain).c_str(),
+	            async_workloads ? "on" : "off");
 	std::fflush(stdout);
 	return true;
 }
@@ -3370,7 +3382,8 @@ void RecordPrepare(GraphicContext& graphics, vk::CommandBuffer command, const Fr
 	config.frameGenerationCallback            = FsrGenerate;
 	config.frameGenerationCallbackUserContext = &s.fg_context;
 	config.frameGenerationEnabled             = mode_on;
-	config.allowAsyncWorkloads                = false;
+	// Must match FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT at context creation.
+	config.allowAsyncWorkloads                = FsrAsyncWorkloadsEnabled() && graphics.fsr_compute_queue != nullptr;
 	config.flags                              = debug_flags;
 	config.onlyPresentGenerated               = false;
 	// (The HUD-less image of this frame, RecordHudless: FSR takes the HUD from the game's frame.)
