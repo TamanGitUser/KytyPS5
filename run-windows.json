@@ -2,7 +2,7 @@
   "environment": {
     "KYTY_VULKAN_RECORDING": "0",
     "KYTY_DEFERRED_SUBMIT": "0",
-    "KYTY_SPECULATE": "0",
+    "KYTY_SPECULATE": "4",
     "KYTY_PIPELINE_BINARIES": "0",
     "KYTY_TABLE_DISPATCH": "1",
     "KYTY_TABLE_XPR": "2",
@@ -12,7 +12,8 @@
     "KYTY_SCENE_WARMUP": "1",
     "KYTY_SCENE_WARMUP_VIDEO_MIB": "512",
     "KYTY_READBACK_QUEUE": "0",
-    "KYTY_TEXTURE_REDUCE": "1"
+    "KYTY_TEXTURE_REDUCE": "1",
+    "KYTY_SPECULATE_THREADS": "4"
   },
   "command": [
     "--",
