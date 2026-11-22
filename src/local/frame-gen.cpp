@@ -259,14 +259,8 @@ bool CameraMatrixLooksValid(const std::array<float, 16>& m) {
 
 bool CameraSrtLooksValid(std::span<const uint32_t> srt) {
 	if (srt.size() < SrtJitter + 2) return false;
-	std::array<float, 16> current {}, previous {};
+	std::array<float, 16> current {};
 	for (uint32_t i = 0; i < 16; ++i) current[i] = AsFloat(srt[SrtViewProj + i]);
-	for (uint32_t i = 0; i < 4; ++i) {
-		previous[i]      = AsFloat(srt[SrtPrevViewProj + i]);
-		previous[4 + i]  = AsFloat(srt[SrtPrevViewProj + 4 + i]);
-		previous[8 + i]  = current[8 + i];
-		previous[12 + i] = AsFloat(srt[SrtPrevViewProj + 8 + i]);
-	}
 	const float jitter_x = AsFloat(srt[SrtJitter]);
 	const float jitter_y = AsFloat(srt[SrtJitter + 1]);
 	return std::isfinite(jitter_x) && std::isfinite(jitter_y) &&
