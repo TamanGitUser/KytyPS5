@@ -33,7 +33,7 @@
     "vrr_flips": false,
     "antilag": false,
     "keep_resident": true,
-    "fps30": true,
+    "fps30": false,
     "extra_args": "-Set KYTY_LIVE_FILE=D:\\emu\\alt-next\\logs\\live-commands.txt,KYTY_PROG_TRACE=",
     "gpu": "",
     "reopen_launcher": true,
