@@ -601,6 +601,8 @@ inline void Run(uint64_t id, const std::string& line) {
 		__llvm_profile_set_filename(arg1);
 		const int result = __llvm_profile_write_file();
 		std::printf("LIVE_PGO id=%" PRIu64 " path=%s result=%d\n", id, arg1, result);
+		std::fflush(stdout);
+		std::quick_exit(result == 0 ? 0 : 1);
 #endif
 	} else if (cmd == "vma" && n >= 2) {
 		// vma <path>: the GPU allocator's detailed statistics (JSON: every allocation's type and size).
