@@ -222,7 +222,9 @@ Buffer::Buffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsag
 	buffer_info.usage       = flags;
 	// KYTY_READBACK_QUEUE: the transfer queue reads guest buffers and writes download buffers.
 	const uint32_t families[] {graphics.queue_family, graphics.readback_family};
-	if (graphics.readback_family != static_cast<uint32_t>(-1)) {
+	if (graphics.readback_family != static_cast<uint32_t>(-1) &&
+	    graphics.readback_family != graphics.queue_family) {
+		// Concurrent sharing is needed only when the readback queue is in another family.
 		buffer_info.sharingMode           = vk::SharingMode::eConcurrent;
 		buffer_info.queueFamilyIndexCount = 2;
 		buffer_info.pQueueFamilyIndices   = families;
