@@ -1421,7 +1421,7 @@ void BufferCache::DownloadBufferMemory(std::span<const DownloadCopy> copies) {
 			}
 			download.Commit();
 			if (submit_current_writer) {
-				m_scheduler.Finish();
+				m_scheduler.Flush();
 				static std::atomic<uint32_t> reports {0};
 				if (reports.fetch_add(1, std::memory_order_relaxed) < 8) {
 					std::printf("Readback copies: transfer queue waiting on in-flight graphics tick %llu\n",
