@@ -290,15 +290,15 @@ bool IsDepthFormat(vk::Format format) {
 } // namespace
 
 bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
-	if (!g_ready || hash == 0) return false;
-	if (CameraShaderKnown(hash)) return speculative || WantsCamera();
+	if (!g_ready || hash == 0 || !WantsCamera()) return false;
+	// Once this frame's camera has been captured, these draws can use the speculative table path again.
+	// Only while the camera is missing must both normal and speculative draws be routed through OnDraw.
+	if (CameraShaderKnown(hash)) return true;
 	const size_t priority = CameraPriorityProbeSlot(hash);
 	if (priority < CameraPriorityProbeHashes.size())
 		return g_camera_priority_attempts[priority].load(std::memory_order_relaxed) < CameraProbeAttempts;
-	// Speculative workers cannot inspect the CPU SRT. Probe ordinary unknown shaders only when
-	// Kyty.Gpu knows the current frame still needs a camera; the priority hashes above are the
-	// new area's pipelines observed immediately before FSR lost its camera input.
-	if (speculative || !WantsCamera()) return false;
+	// Speculative workers cannot inspect the CPU SRT. Probe ordinary unknown shaders only on Kyty.Gpu.
+	if (speculative) return false;
 	const size_t slot = CameraProbeSlot(hash);
 	return slot < CameraProbeSlots && g_camera_probe_attempts[slot].load(std::memory_order_relaxed) < CameraProbeAttempts;
 }
