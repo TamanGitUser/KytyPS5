@@ -104,8 +104,9 @@ struct GraphicContext {
 	Common::Mutex                      queue_mutex;
 	uint32_t                           queue_family = static_cast<uint32_t>(-1);
 	vk::Queue                          queue        = nullptr;
-	// KYTY_READBACK_QUEUE (set at device creation): a transfer-only queue for guest readback
-	// copies (src/local/readback-queue.h); buffers are then shared with its family.
+	// KYTY_READBACK_QUEUE (set at device creation): a separate queue for guest readback copies. It is
+	// from a transfer-only family where available, else a spare graphics-family queue. Buffers are
+	// shared across queue families only when the readback queue is in another family.
 	uint32_t                           readback_family = static_cast<uint32_t>(-1);
 	uint32_t                           readback_queue_index = 0;
 	vk::Queue                          readback_queue  = nullptr;
