@@ -220,7 +220,7 @@ Buffer::Buffer(GraphicContext& graphics, CommandScheduler& scheduler, MemoryUsag
 	vk::BufferCreateInfo buffer_info {};
 	buffer_info.size        = size;
 	buffer_info.usage       = flags;
-	// KYTY_READBACK_QUEUE: the transfer queue reads guest buffers and writes download buffers.
+	// KYTY_READBACK_QUEUE: a separate queue reads guest buffers and writes download buffers.
 	const uint32_t families[] {graphics.queue_family, graphics.readback_family};
 	if (graphics.readback_family != static_cast<uint32_t>(-1) &&
 	    graphics.readback_family != graphics.queue_family) {
