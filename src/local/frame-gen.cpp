@@ -158,31 +158,31 @@ std::array<std::atomic<uint64_t>, CameraShaderSlots> g_camera_shader_hashes {};
 
 template <size_t N>
 bool CameraHashContains(const std::array<std::atomic<uint64_t>, N>& hashes, uint64_t hash) {
-\tif (hash == 0) return false;
-\tconst size_t start = static_cast<size_t>((hash ^ (hash >> 32u)) * 0x9e3779b97f4a7c15ull) & (N - 1);
-\tfor (size_t n = 0; n < N; ++n) {
-\t\tconst auto found = hashes[(start + n) & (N - 1)].load(std::memory_order_relaxed);
-\t\tif (found == hash) return true;
-\t\tif (found == 0) return false;
-\t}
-\treturn false;
+	if (hash == 0) return false;
+	const size_t start = static_cast<size_t>((hash ^ (hash >> 32u)) * 0x9e3779b97f4a7c15ull) & (N - 1);
+	for (size_t n = 0; n < N; ++n) {
+		const auto found = hashes[(start + n) & (N - 1)].load(std::memory_order_relaxed);
+		if (found == hash) return true;
+		if (found == 0) return false;
+	}
+	return false;
 }
 
 template <size_t N>
 bool CameraHashInsert(std::array<std::atomic<uint64_t>, N>& hashes, uint64_t hash) {
-\tif (hash == 0) return false;
-\tconst size_t start = static_cast<size_t>((hash ^ (hash >> 32u)) * 0x9e3779b97f4a7c15ull) & (N - 1);
-\tfor (size_t n = 0; n < N; ++n) {
-\t\tauto& slot = hashes[(start + n) & (N - 1)];
-\t\tauto  found = slot.load(std::memory_order_relaxed);
-\t\tif (found == hash) return false;
-\t\tif (found == 0 && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed)) return true;
-\t}
-\treturn false;
+	if (hash == 0) return false;
+	const size_t start = static_cast<size_t>((hash ^ (hash >> 32u)) * 0x9e3779b97f4a7c15ull) & (N - 1);
+	for (size_t n = 0; n < N; ++n) {
+		auto& slot = hashes[(start + n) & (N - 1)];
+		auto  found = slot.load(std::memory_order_relaxed);
+		if (found == hash) return false;
+		if (found == 0 && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed)) return true;
+	}
+	return false;
 }
 
 bool CameraShaderKnown(uint64_t hash) {
-\treturn IsGbufferVertexShader(hash) || CameraHashContains(g_camera_shader_hashes, hash);
+	return IsGbufferVertexShader(hash) || CameraHashContains(g_camera_shader_hashes, hash);
 }
 
 // An unlisted G-buffer shader still has the same camera block at SRT words 29, 45 and 57. Accept it only
@@ -190,71 +190,62 @@ bool CameraShaderKnown(uint64_t hash) {
 // view-forward row, an orthogonal camera basis, and the constant near-depth row. UI/object transforms do
 // not pass this signature.
 bool CameraMatrixLooksValid(const std::array<float, 16>& m) {
-\tfor (const float value: m)
-\t\tif (!std::isfinite(value) || std::fabs(value) > 100000.0f) return false;
-\tconst double flen = std::sqrt(static_cast<double>(m[12]) * m[12] +
-\t                              static_cast<double>(m[13]) * m[13] +
-\t                              static_cast<double>(m[14]) * m[14]);
-\tif (flen < 0.5 || flen > 1.5) return false;
-\tconst double forward[3] {m[12] / flen, m[13] / flen, m[14] / flen};
-\tconst double near_plane = m[11] / flen;
-\tif (!std::isfinite(near_plane) || near_plane < 0.001 || near_plane > 10.0) return false;
-\tconst double z_tolerance = std::max(1.0, std::fabs(static_cast<double>(m[11]))) * 0.0001;
-\tif (std::fabs(m[8]) > z_tolerance || std::fabs(m[9]) > z_tolerance ||
-\t    std::fabs(m[10]) > z_tolerance) return false;
+	for (const float value: m)
+		if (!std::isfinite(value) || std::fabs(value) > 100000.0f) return false;
+	const double flen = std::sqrt(static_cast<double>(m[12]) * m[12] +
+	                              static_cast<double>(m[13]) * m[13] +
+	                              static_cast<double>(m[14]) * m[14]);
+	if (flen < 0.5 || flen > 1.5) return false;
+	const double forward[3] {m[12] / flen, m[13] / flen, m[14] / flen};
+	const double near_plane = m[11] / flen;
+	if (!std::isfinite(near_plane) || near_plane < 0.001 || near_plane > 10.0) return false;
+	const double z_tolerance = std::max(1.0, std::fabs(static_cast<double>(m[11]))) * 0.0001;
+	if (std::fabs(m[8]) > z_tolerance || std::fabs(m[9]) > z_tolerance ||
+	    std::fabs(m[10]) > z_tolerance) return false;
 
-\tconst auto axis = [&](uint32_t row, double out[3], double& scale) {
-\t\tconst double offset = (static_cast<double>(m[row * 4]) * forward[0] +
-\t\t                      static_cast<double>(m[row * 4 + 1]) * forward[1] +
-\t\t                      static_cast<double>(m[row * 4 + 2]) * forward[2]) / flen;
-\t\tdouble v[3] {
-\t\t    m[row * 4] / flen - offset * forward[0],
-\t\t    m[row * 4 + 1] / flen - offset * forward[1],
-\t\t    m[row * 4 + 2] / flen - offset * forward[2]
-\t\t};
-\t\tscale = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-\t\tif (!std::isfinite(scale) || scale < 0.05 || scale > 20.0) return false;
-\t\tfor (int i = 0; i < 3; ++i) out[i] = v[i] / scale;
-\t\treturn true;
-\t};
-\tdouble right[3] {}, up_row[3] {}, sx = 0, sy = 0;
-\tif (!axis(0, right, sx) || !axis(1, up_row, sy)) return false;
-\tconst double dot = right[0] * up_row[0] + right[1] * up_row[1] + right[2] * up_row[2];
-\tif (std::fabs(dot) > 0.15) return false;
-\tconst double expected_up[3] {
-\t    forward[1] * right[2] - forward[2] * right[1],
-\t    forward[2] * right[0] - forward[0] * right[2],
-\t    forward[0] * right[1] - forward[1] * right[0]
-\t};
-\tconst double alignment = expected_up[0] * up_row[0] + expected_up[1] * up_row[1] +
-\t                         expected_up[2] * up_row[2];
-\treturn std::fabs(alignment) > 0.90;
+	const auto axis = [&](uint32_t row, double out[3], double& scale) {
+		const double offset = (static_cast<double>(m[row * 4]) * forward[0] +
+		                      static_cast<double>(m[row * 4 + 1]) * forward[1] +
+		                      static_cast<double>(m[row * 4 + 2]) * forward[2]) / flen;
+		double v[3] {
+		    m[row * 4] / flen - offset * forward[0],
+		    m[row * 4 + 1] / flen - offset * forward[1],
+		    m[row * 4 + 2] / flen - offset * forward[2]
+		};
+		scale = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+		if (!std::isfinite(scale) || scale < 0.05 || scale > 20.0) return false;
+		for (int i = 0; i < 3; ++i) out[i] = v[i] / scale;
+		return true;
+	};
+	double right[3] {}, up_row[3] {}, sx = 0, sy = 0;
+	if (!axis(0, right, sx) || !axis(1, up_row, sy)) return false;
+	const double dot = right[0] * up_row[0] + right[1] * up_row[1] + right[2] * up_row[2];
+	if (std::fabs(dot) > 0.15) return false;
+	const double expected_up[3] {
+	    forward[1] * right[2] - forward[2] * right[1],
+	    forward[2] * right[0] - forward[0] * right[2],
+	    forward[0] * right[1] - forward[1] * right[0]
+	};
+	const double alignment = expected_up[0] * up_row[0] + expected_up[1] * up_row[1] +
+	                         expected_up[2] * up_row[2];
+	return std::fabs(alignment) > 0.90;
 }
 
 bool CameraSrtLooksValid(std::span<const uint32_t> srt) {
-\tif (srt.size() < SrtJitter + 2) return false;
-\tstd::array<float, 16> current {}, previous {};
-\tfor (uint32_t i = 0; i < 16; ++i) current[i] = AsFloat(srt[SrtViewProj + i]);
-\tfor (uint32_t i = 0; i < 4; ++i) {
-\t\tprevious[i]      = AsFloat(srt[SrtPrevViewProj + i]);
-\t\tprevious[4 + i]  = AsFloat(srt[SrtPrevViewProj + 4 + i]);
-\t\tprevious[8 + i]  = current[8 + i];
-\t\tprevious[12 + i] = AsFloat(srt[SrtPrevViewProj + 8 + i]);
-\t}
-\tconst float jitter_x = AsFloat(srt[SrtJitter]);
-\tconst float jitter_y = AsFloat(srt[SrtJitter + 1]);
-\treturn std::isfinite(jitter_x) && std::isfinite(jitter_y) &&
-\t       std::fabs(jitter_x) <= 0.1f && std::fabs(jitter_y) <= 0.1f &&
-\t       CameraMatrixLooksValid(current) && CameraMatrixLooksValid(previous);
-}
-
-bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
-\tif (!g_ready || hash == 0) return false;
-\tif (CameraShaderKnown(hash)) return speculative || WantsCamera();
-\tif (speculative || !WantsCamera()) return false;
-\t// A bounded number of distinct unlisted vertex shaders are tried once. The first matching perspective
-\t// SRT is remembered and then receives the same per-frame treatment as the known G-buffer shaders.
-\treturn CameraHashInsert(g_camera_probe_hashes, hash);
+	if (srt.size() < SrtJitter + 2) return false;
+	std::array<float, 16> current {}, previous {};
+	for (uint32_t i = 0; i < 16; ++i) current[i] = AsFloat(srt[SrtViewProj + i]);
+	for (uint32_t i = 0; i < 4; ++i) {
+		previous[i]      = AsFloat(srt[SrtPrevViewProj + i]);
+		previous[4 + i]  = AsFloat(srt[SrtPrevViewProj + 4 + i]);
+		previous[8 + i]  = current[8 + i];
+		previous[12 + i] = AsFloat(srt[SrtPrevViewProj + 8 + i]);
+	}
+	const float jitter_x = AsFloat(srt[SrtJitter]);
+	const float jitter_y = AsFloat(srt[SrtJitter + 1]);
+	return std::isfinite(jitter_x) && std::isfinite(jitter_y) &&
+	       std::fabs(jitter_x) <= 0.1f && std::fabs(jitter_y) <= 0.1f &&
+	       CameraMatrixLooksValid(current) && CameraMatrixLooksValid(previous);
 }
 
 bool HasStencil(vk::Format format) {
@@ -275,6 +266,15 @@ bool IsDepthFormat(vk::Format format) {
 }
 
 } // namespace
+
+bool ShouldCaptureCamera(uint64_t hash, bool speculative) {
+	if (!g_ready || hash == 0) return false;
+	if (CameraShaderKnown(hash)) return speculative || WantsCamera();
+	if (speculative || !WantsCamera()) return false;
+	// A bounded number of distinct unlisted vertex shaders are tried once. The first matching perspective
+	// SRT is remembered and then receives the same per-frame treatment as the known G-buffer shaders.
+	return CameraHashInsert(g_camera_probe_hashes, hash);
+}
 
 void Transition(vk::CommandBuffer command, VulkanImage& image, vk::ImageAspectFlags aspect,
                 vk::ImageLayout layout, vk::AccessFlags2 access, vk::PipelineStageFlags2 stage) {
