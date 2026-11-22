@@ -1002,10 +1002,25 @@ static vk::Device VulkanCreateDevice(vk::PhysicalDevice physical_device, const V
 			}
 		}
 	}
+	if (graphics.readback_family == static_cast<uint32_t>(-1) &&
+	    (readback != nullptr && *readback != '\0' ? std::strcmp(readback, "0") != 0 : !intel)) {
+		// No transfer-only family: use a spare queue of the graphics family. Queues in the same
+		// family need no ownership transfer; the graphics timeline still orders the copies after
+		// the last writer. The queue count includes the game's, presenter's and FSR's queues above.
+		const uint32_t index = queue_create_infos[0].queueCount;
+		if (queue_family < families.size() && families[queue_family].queueCount > index) {
+			queue_create_infos[0].queueCount = index + 1;
+			graphics.readback_family = queue_family;
+			graphics.readback_queue_index = index;
+			std::printf("Readback copies: separate queue %u from graphics family %u\n", index, queue_family);
+		}
+	}
 	if (graphics.readback_family != static_cast<uint32_t>(-1)) {
-		std::printf("Readback copies: dedicated transfer-only queue family %u\n", graphics.readback_family);
+		if (graphics.readback_family != queue_family) {
+			std::printf("Readback copies: dedicated transfer-only queue family %u\n", graphics.readback_family);
+		}
 	} else if (readback != nullptr && *readback != '\0' && std::strcmp(readback, "0") != 0) {
-		std::printf("Readback copies: graphics queue (no separate transfer-only family found)\n");
+		std::printf("Readback copies: graphics queue (no spare transfer queue available)\n");
 	}
 
 	vk::PhysicalDeviceColorWriteEnableFeaturesEXT color_write_ext {};
