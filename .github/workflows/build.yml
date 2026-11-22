@@ -131,7 +131,7 @@ jobs:
               $errors | ForEach-Object { Write-Host $_.ToString() }
               throw "$path failed Windows PowerShell 5.1 syntax validation."
             }
-            Write-Host "$path: Windows PowerShell 5.1 syntax OK"
+            Write-Host "${path}: Windows PowerShell 5.1 syntax OK"
           }
 
       - name: Package
