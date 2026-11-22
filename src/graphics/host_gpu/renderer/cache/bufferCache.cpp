@@ -1396,6 +1396,7 @@ void BufferCache::DownloadBufferMemory(std::span<const DownloadCopy> copies) {
 		ranges.reserve(batch.size());
 		for (const auto& copy: batch) ranges.emplace_back(copy.address, copy.address + copy.size);
 		uint64_t wait_tick = 0;
+		const uint64_t scheduler_tick = m_scheduler.CurrentTick();
 		bool     queue_ready = ReadbackQueueReady(ranges, false, wait_tick);
 		bool     submit_current_writer = false;
 #ifdef KYTY_LOCAL_VULKAN_RECORDING
@@ -1429,7 +1430,7 @@ void BufferCache::DownloadBufferMemory(std::span<const DownloadCopy> copies) {
 			}
 			if (LiveTrace::WriteTicks())
 				for (const auto& copy: batch)
-					LiveTrace::Event(LiveTrace::SyncReadback, copy.address, copy.size | m_scheduler.CurrentTick() << 32u);
+					LiveTrace::Event(LiveTrace::SyncReadback, copy.address, copy.size | scheduler_tick << 32u);
 			const bool wait_done = m_scheduler.GetMasterSemaphore().KnownGpuTick() >= wait_tick;
 			m_readback_queue->Wait(m_readback_queue->Copy(regions, download.Handle(),
 			                                              m_scheduler.GetMasterSemaphore().Handle(), wait_tick, wait_done));
