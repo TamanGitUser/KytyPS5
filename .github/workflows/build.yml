@@ -98,6 +98,19 @@ jobs:
           call build-windows.cmd kyty_emulator || exit /b 1
           call build-windows.cmd kyty_shader_precompile || exit /b 1
 
+      # A separate instrumented binary lets a player collect a Mode 4 PGO profile without replacing the release build.
+      - name: Build Mode 4 PGO capture emulator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:KYTY_BUILD_DIR = '_Build\windows-pgogen'
+          $env:KYTY_CMAKE_ARGS = '-DKYTY_PGO_GENERATE=ON -DKYTY_PGO_KIND=fe -DKYTY_MARCH=x86-64-v3 -DKYTY_WINDOWS_DEBUG_INFO=ON'
+          & cmd /c 'build-windows.cmd kyty_emulator'
+          $code = $LASTEXITCODE
+          Remove-Item env:KYTY_BUILD_DIR, env:KYTY_CMAKE_ARGS -ErrorAction SilentlyContinue
+          if ($code -ne 0) { throw "Mode 4 PGO capture build failed with exit code $code" }
+          if (!(Test-Path '_Build\windows-pgogen\kyty_emulator.exe')) { throw 'PGO capture emulator was not produced.' }
+
       # The settings window (launcher-windows: WPF on .NET Framework 4.7.2, part of Windows 10 and 11).
       - name: Build launcher
         shell: cmd
@@ -109,15 +122,17 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $script = (Resolve-Path 'run-windows.ps1').Path
-          $tokens = $null
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Host $_.ToString() }
-            throw 'run-windows.ps1 failed Windows PowerShell 5.1 syntax validation.'
+          foreach ($path in @('run-windows.ps1', 'tools\local\windows\pgo-capture.ps1', 'tools\local\windows\pgo-save.ps1')) {
+            $script = (Resolve-Path $path).Path
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Host $_.ToString() }
+              throw "$path failed Windows PowerShell 5.1 syntax validation."
+            }
+            Write-Host "$path: Windows PowerShell 5.1 syntax OK"
           }
-          Write-Host 'run-windows.ps1: Windows PowerShell 5.1 syntax OK'
 
       - name: Package
         shell: pwsh
@@ -140,6 +155,13 @@ jobs:
           Copy-Item run-windows.json "$out\launch.json"
           # All launch and game-location settings travel with the portable folder.
           Copy-Item launcher-settings.json, game-path.txt $out
+          # The instrumented emulator is kept separate; pgo-capture.cmd swaps it in temporarily and restores the release exe.
+          $pgo = Join-Path $out 'pgo-capture'
+          New-Item -ItemType Directory -Force $pgo | Out-Null
+          Copy-Item '_Build\windows-pgogen\kyty_emulator.exe' (Join-Path $pgo 'kyty_emulator_pgo.exe')
+          Copy-Item tools\local\windows\pgo-capture.ps1, tools\local\windows\pgo-save.ps1,
+            tools\local\windows\pgo-capture.cmd, tools\local\windows\pgo-save.cmd,
+            tools\local\windows\PGO-CAPTURE-README.md $pgo
           Copy-Item docs\PORTABLE-README.md "$out\README.md"
           Copy-Item docs\GTX-MAXWELL-CONFIG.md "$out\GTX-MAXWELL-CONFIG.md"
           # The render-pass states the precompile program makes the seed file with: the first launch lists the
