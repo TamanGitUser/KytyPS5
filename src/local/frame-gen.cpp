@@ -2345,19 +2345,19 @@ void OnDraw(uint64_t vs_hash, std::span<const uint32_t> srt) {
 		probe_slot = CameraProbeSlot(vs_hash);
 		if (probe_slot == CameraProbeSlots) return;
 	}
-	if (srt.size() < SrtJitter + 2) {
+	const auto note_failed_probe = [&] {
 		if (priority < CameraPriorityProbeHashes.size())
 			g_camera_priority_attempts[priority].fetch_add(1, std::memory_order_relaxed);
 		else if (probe_slot < CameraProbeSlots)
 			g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+	};
+	if (srt.size() < SrtJitter + 2) {
+		note_failed_probe();
 		return;
 	}
 	if (priority < CameraPriorityProbeHashes.size() || probe_slot < CameraProbeSlots) {
 		if (!CameraSrtLooksValid(srt)) {
-			if (priority < CameraPriorityProbeHashes.size())
-				g_camera_priority_attempts[priority].fetch_add(1, std::memory_order_relaxed);
-			else
-				g_camera_probe_attempts[probe_slot].fetch_add(1, std::memory_order_relaxed);
+			note_failed_probe();
 			return;
 		}
 		if (CameraHashInsert(g_camera_shader_hashes, vs_hash)) {
