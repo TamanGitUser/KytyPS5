@@ -3653,6 +3653,18 @@ void PipelineCache::RunWarmup(WarmupSettings settings) {
 	if (!m_warmup_stop.load(std::memory_order_relaxed)) StartShaderPrefetch(std::move(recorded_inputs));
 }
 
+namespace {
+constexpr uint64_t SceneCacheOnlyReserve = uint64_t {192} << 20u;
+
+bool SceneWarmupCacheOnlyEnabled() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_SCENE_WARMUP_CACHE_ONLY");
+		return value != nullptr && std::string_view(value) == "1";
+	}();
+	return enabled;
+}
+} // namespace
+
 void PipelineCache::WarmScene(uint32_t scene, uint64_t compute_video, bool in_memory) {
 	auto& programs = *m_program_cache;
 	m_scenes_warmed.insert(scene);
@@ -3710,10 +3722,17 @@ void PipelineCache::WarmScene(uint32_t scene, uint64_t compute_video, bool in_me
 		if (!in_memory)
 			for (const auto& words: programs.warm_recipes) only.insert(LocalShaderWarmup::RecipeKey(words));
 	}
-	// A known scene has a much smaller, relevant recipe set than the whole game. On small GPUs,
-	// give that set only the memory the driver can currently spare after protecting textures and render targets.
-	// Recalculate this cap on every retry: the first warmup may run while the game is still loading textures.
-	if (known) {
+	// The driver cache can be warmed without retaining every compute pipeline object in 4 GiB of VRAM.
+	// Each one is created and immediately released, with a conservative free-memory floor and one worker.
+	const bool cache_only_compute = known && SceneWarmupCacheOnlyEnabled();
+	if (cache_only_compute) {
+		compute_video = UINT64_MAX;
+		PipelineCacheLog("Scene warmup: compute pipelines warm the driver cache only; {} MiB is kept free",
+		                 SceneCacheOnlyReserve >> 20u);
+	} else if (known) {
+		// A known scene has a much smaller, relevant recipe set than the whole game. On small GPUs,
+		// give that set only the memory the driver can currently spare after protecting textures and render targets.
+		// Recalculate this cap on every retry: the first warmup may run while the game is still loading textures.
 		const char* value = std::getenv("KYTY_SCENE_WARMUP_VIDEO_MIB");
 		if (value != nullptr && *value != '\0') {
 			char* end = nullptr;
@@ -3736,7 +3755,7 @@ void PipelineCache::WarmScene(uint32_t scene, uint64_t compute_video, bool in_me
 			}
 		}
 	}
-	const bool complete = WarmPipelines(compute_video, true, known || !in_memory ? &only : nullptr);
+	const bool complete = WarmPipelines(compute_video, true, known || !in_memory ? &only : nullptr, cache_only_compute);
 	if (!complete) {
 		m_scenes_warmed.erase(scene);
 		if (!known) m_scene_warmed_all = false;
@@ -3762,6 +3781,7 @@ void PipelineCache::SceneLoop(uint64_t compute_video) {
 	constexpr int64_t SaveSeconds = 15;
 	constexpr int64_t RetrySeconds = 60;
 	constexpr uint64_t RetryHeadroom = uint64_t {640} << 20u; // 512 MiB reserve plus 128 MiB retry margin.
+	const uint64_t retry_headroom = SceneWarmupCacheOnlyEnabled() ? SceneCacheOnlyReserve : RetryHeadroom;
 	uint64_t          seen        = SceneTags::Generation();
 	auto              saved       = std::chrono::steady_clock::now();
 	auto              retried     = saved;
@@ -3784,7 +3804,7 @@ void PipelineCache::SceneLoop(uint64_t compute_video) {
 				const uint64_t budget = m_graphics.GetTotalMemoryBudget();
 				const uint64_t used = m_graphics.GetDeviceMemoryUsage();
 				const uint64_t free = budget > used ? budget - used : 0;
-				if (free >= RetryHeadroom) {
+				if (free >= retry_headroom) {
 					PipelineCacheLog("Scene warmup: retrying {} with {} MiB free",
 					                 scene != SceneTags::None ? SceneTags::Name(scene) : std::string("no scene"),
 					                 free >> 20u);
@@ -3894,7 +3914,8 @@ void PipelineCache::HoldForShaderPrefetch(const std::function<void(const Prefetc
 		                 waited, progress.done, progress.total);
 }
 
-bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only) {
+bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only,
+                                  bool cache_only_compute) {
 	auto& programs = *m_program_cache;
 	const auto begin = std::chrono::steady_clock::now();
 	const auto get = [&](uint32_t index) -> ProgramCache::Permutation* {
@@ -3942,11 +3963,15 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 		}
 		jobs.push_back(std::move(job));
 	}
-	if (only != nullptr) {
-		// (A later scene's: what an earlier one made, or the game, stays.)
+	if (only != nullptr || cache_only_compute) {
+		// (A later scene's: what an earlier one made, or the game, stays; cache-only jobs already warmed stay too.)
 		Common::LockGuard lock(m_mutex);
 		std::erase_if(jobs, [&](const Job& job) {
-			return job.compute != nullptr ? m_compute_pipelines.contains(job.compute->handle.id) : m_graphics_pipelines.contains(job.key);
+			if (job.compute != nullptr) {
+				return m_compute_pipelines.contains(job.compute->handle.id) ||
+				       (cache_only_compute && m_compute_cache_warmed.contains(job.compute->handle.id));
+			}
+			return only != nullptr && m_graphics_pipelines.contains(job.key);
 		});
 	}
 	if (background) {
@@ -3956,15 +3981,16 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 	}
 
 	std::atomic<size_t> next {0}, computes {0}, left {0};
-	// Compute pipelines stay under their per-attempt cap and leave room for game allocations while warming.
-	// Check more often than before: a 32-pipeline interval could overshoot badly on a 4 GiB card.
+	// Retained pipelines leave a 512 MiB reserve. Cache-only warmup has one worker and releases each
+	// compute pipeline immediately, so its transient floor can be lower without accumulating VRAM objects.
 	constexpr uint64_t Reserve = uint64_t {512} << 20u;
 	m_graphics.RefreshMemoryBudget();
 	const uint64_t video_start = m_graphics.GetDeviceMemoryUsage();
 	const uint64_t start_budget = m_graphics.GetTotalMemoryBudget();
 	const uint64_t start_used = m_graphics.GetDeviceMemoryUsage();
-	std::atomic<bool> compute_full {compute_video == 0 ||
-	                                (start_budget <= start_used || start_budget - start_used <= Reserve)};
+	const uint64_t active_reserve = cache_only_compute ? SceneCacheOnlyReserve : Reserve;
+	std::atomic<bool> compute_full {(!cache_only_compute && compute_video == 0) ||
+	                                (start_budget <= start_used || start_budget - start_used <= active_reserve)};
 	std::atomic<bool> unfinished {false};
 	// What the workers made (job index and pipeline), for this thread to add.
 	std::mutex                                                made_mutex;
@@ -3982,10 +4008,33 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 			auto  pipeline = std::make_unique<Pipeline>();
 			if (job.compute) {
 				if (compute_full.load(std::memory_order_relaxed)) { ++left; continue; }
+				if (cache_only_compute) {
+					m_graphics.RefreshMemoryBudget();
+					const auto budget = m_graphics.GetTotalMemoryBudget();
+					const auto used = m_graphics.GetDeviceMemoryUsage();
+					if (budget <= used || budget - used <= SceneCacheOnlyReserve) {
+						compute_full.store(true, std::memory_order_relaxed);
+						++left;
+						continue;
+					}
+				}
 				LocalShaderWarmup::Record input;
 				if (!decode(job.recipe.compute, input)) { ++skipped; continue; }
 				input.compute.stage.program = &job.compute->program;
 				CreatePipelineInternal(m_graphics, *pipeline, input.compute, job.compute->handle.module, m_driver_cache);
+				if (cache_only_compute) {
+					if (pipeline->pipeline == nullptr || pipeline->pipeline_layout == nullptr) { ++skipped; continue; }
+					DeviceFault::ForgetPipeline(pipeline->pipeline);
+					m_graphics.device.destroyPipeline(pipeline->pipeline, nullptr);
+					pipeline->pipeline = nullptr;
+					MainPipelineDone();
+					{
+						std::lock_guard lock(made_mutex);
+						made.emplace_back(n, nullptr);
+					}
+					made_ready.notify_one();
+					continue;
+				}
 				if (compute_video != UINT64_MAX && (computes.fetch_add(1, std::memory_order_relaxed) + 1) % 8 == 0) {
 					m_graphics.RefreshMemoryBudget();
 					const auto video = m_graphics.GetDeviceMemoryUsage();
@@ -4014,9 +4063,10 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 			made_ready.notify_one();
 		}
 	};
-	const uint32_t threads = std::min<uint32_t>(ProgramCache::WarmupThreads(background),
-	                                            static_cast<uint32_t>(std::max<size_t>(jobs.size(), 1)));
-	size_t compiled = 0, present = 0;
+	const uint32_t threads = cache_only_compute ? 1u :
+	    std::min<uint32_t>(ProgramCache::WarmupThreads(background),
+	                       static_cast<uint32_t>(std::max<size_t>(jobs.size(), 1)));
+	size_t compiled = 0, present = 0, cache_only = 0;
 	{
 		std::vector<std::jthread> pool;
 		for (uint32_t t = 0; t < threads; ++t)
@@ -4044,20 +4094,25 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 			{
 				Common::LockGuard lock(m_mutex);
 				for (auto& [n, pipeline]: batch) {
-					const auto& job   = jobs[n];
-					pipeline->recipe  = job.recipe_key;
-					const bool  added = job.compute != nullptr
-					                        ? m_compute_pipelines.try_emplace(job.compute->handle.id, std::move(pipeline)).second
-					                        : m_graphics_pipelines.try_emplace(job.key, std::move(pipeline)).second;
+					const auto& job = jobs[n];
+					if (cache_only_compute && job.compute != nullptr && pipeline == nullptr) {
+						m_compute_cache_warmed.insert(job.compute->handle.id);
+						++cache_only;
+						continue;
+					}
+					pipeline->recipe = job.recipe_key;
+					const bool added = job.compute != nullptr
+					                       ? m_compute_pipelines.try_emplace(job.compute->handle.id, std::move(pipeline)).second
+					                       : m_graphics_pipelines.try_emplace(job.key, std::move(pipeline)).second;
 					added ? ++compiled : ++present;
 				}
 			}
 			for (auto& [n, pipeline]: batch)
 				if (pipeline != nullptr) m_graphics.device.destroyPipeline(pipeline->pipeline, nullptr); // (the game's came first)
-			if (const auto done = compiled + present; done / 1000 != (done - batch.size()) / 1000)
+			if (const auto done = compiled + present + cache_only; done / 1000 != (done - batch.size()) / 1000)
 				PipelineCacheLog("Pipeline warmup: compiling {}/{}", done, jobs.size());
-			if (background) programs.warm_done.store(compiled + present, std::memory_order_relaxed);
-			else StartupProgress::Report("Preparing pipelines", compiled + present, jobs.size()); // (the main thread's)
+			if (background) programs.warm_done.store(compiled + present + cache_only, std::memory_order_relaxed);
+			else StartupProgress::Report("Preparing pipelines", compiled + present + cache_only, jobs.size()); // (the main thread's)
 		}
 	}
 	PipelineCacheLog("Pipeline warmup: compiled {} of {} recipes ({} the game made first), skipped {}, elapsed {} ms ({} "
@@ -4065,6 +4120,9 @@ bool PipelineCache::WarmPipelines(uint64_t compute_video, bool background, const
 		compiled, programs.warm_recipes.size(), present, skipped.load(),
 		std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count(),
 		threads, background ? ", beside the game" : "");
+	if (cache_only_compute)
+		PipelineCacheLog("Pipeline warmup: {} compute pipelines compiled into the driver cache and immediately released",
+		                 cache_only);
 	if (compute_video != UINT64_MAX)
 		PipelineCacheLog("Pipeline warmup: compute pipelines up to {} MiB of video memory, {} older ones deferred",
 		                 compute_video >> 20u, left.load());

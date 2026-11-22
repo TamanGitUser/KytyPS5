@@ -432,6 +432,8 @@ private:
 	std::unordered_map<GraphicsPipelineKey, Pipeline*, NativeGraphicsPipelineKeyHash>
 	    m_native_graphics_pipelines;
 	std::unordered_map<uint64_t, std::unique_ptr<Pipeline>> m_compute_pipelines;
+	// Compute pipelines compiled into the driver cache but not retained as VRAM objects during cache-only scene warmup.
+	std::unordered_set<uint64_t> m_compute_cache_warmed;
 	mutable Common::Mutex m_mutex; // (mutable: TableFormatOnlyBuffers, const, walks the programs under it)
 	// TryCreateGraphicsPipeline: pipelines a worker is still compiling, by key.
 	struct PendingGraphicsPipeline;
@@ -552,7 +554,8 @@ private:
 	void InitializeStaticCache(bool create);
 	// The recorded pipelines; compute ones, newest first, while they took less than `compute_video` bytes of video memory.
 	// `only`: of these recipes alone (LocalShaderWarmup::RecipeKey), none the cache has.
-	bool WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only = nullptr);
+	bool WarmPipelines(uint64_t compute_video, bool background, const std::unordered_set<uint64_t>* only = nullptr,
+	                    bool cache_only_compute = false);
 #ifdef KYTY_STATIC_PRECOMPILE
 	bool SaveStaticCache(vk::PipelineCache cache, const std::filesystem::path& path);
 	static bool MergeBinaryShards(GraphicContext& graphics, bool prune, bool keep_shards);
