@@ -412,10 +412,11 @@ private:
 	                                                  bool* completed = nullptr);
 	void CopyGuestReadback(const std::shared_ptr<GuestReadback>& request);
 	void FinishGuestReadback(size_t slot, bool detach = false);
-	static constexpr size_t GuestReadbackSlots = 32;
+	// The transfer queue has 64 command buffers; keep enough guest slots to avoid reusing a pending readback.
+	static constexpr size_t GuestReadbackSlots = 64;
 	std::array<std::shared_ptr<GuestReadback>, GuestReadbackSlots> m_guest_readbacks {};
 	std::array<std::unique_ptr<Buffer>, GuestReadbackSlots> m_guest_downloads {};
-	uint32_t m_active_guest_readbacks = 0;
+	uint64_t m_active_guest_readbacks = 0;
 	struct CopyFeedback;
 	void InvalidateCopyFeedback(uint64_t vaddr, uint64_t size);
 	[[nodiscard]] bool TryReadCopyFeedback(Buffer& buffer, uint64_t vaddr, uint64_t size);
