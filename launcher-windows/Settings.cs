@@ -15,10 +15,10 @@ sealed class Settings {
 		new object[] {"game", ""}, new object[] {"resolution", "2560x1440"}, new object[] {"fullscreen", false},
 		new object[] {"aspect", true}, new object[] {"language", 1}, new object[] {"redzone", true},
 		new object[] {"cheats", false}, new object[] {"ecores", false}, new object[] {"fps120", false},
-		new object[] {"render", 1440}, new object[] {"ratio", "16:9"}, new object[] {"quality", "standard"},
+		new object[] {"render", 540}, new object[] {"ratio", "16:9"}, new object[] {"quality", "lowest"},
 		new object[] {"vsync", false}, new object[] {"hdr", false}, new object[] {"framegen", 0}, new object[] {"hud", 0},
-		new object[] {"streamline", ""}, new object[] {"safegpu", false}, new object[] {"upscaler", ""},
-		new object[] {"render_dlss", 1080}, new object[] {"fsr", false}, new object[] {"output", "auto"},
+		new object[] {"streamline", ""}, new object[] {"safegpu", true}, new object[] {"upscaler", ""},
+		new object[] {"render_dlss", 1080}, new object[] {"fsr", false}, new object[] {"output", "1080p"},
 		new object[] {"lowlatency", false}, new object[] {"ui_language", ""},
 		// (Game page: the DualSense's own speaker.)
 		new object[] {"keyboard_prompts", false}, new object[] {"pad_speaker", true}, new object[] {"pad_speaker_volume", 100},
