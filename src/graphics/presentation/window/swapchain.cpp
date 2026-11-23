@@ -733,8 +733,8 @@ struct Presenter::Impl {
 		Waiting dropped;
 		{
 			std::unique_lock lock(waiting_mutex);
-			// (Each frame Streamline's DLSS upscaled is presented, FrameGen::PresentEveryFrame: a new frame waits until the
-			// thread took the one waiting, 250 ms at most, rather than replace it.)
+			// (DLSS super-resolution and FSR frame generation need every source frame: wait for the presenter
+			// to take the pending frame, up to 250 ms, rather than replace it and break temporal continuity.)
 			if (next.frame != nullptr && !next.reuse && FrameGen::PresentEveryFrame()) {
 				waiting_taken.wait_for(lock, std::chrono::milliseconds(250),
 				                       [&] { return waiting.frame == nullptr || waiting.reuse; });
@@ -743,7 +743,7 @@ struct Presenter::Impl {
 		}
 		if (next.frame != nullptr && !next.reuse) present_stats.handed.fetch_add(1, std::memory_order_relaxed);
 		waiting_changed.notify_one();
-		// (A game frame DLSS-G had inputs for never shown: the next one's motion spans two frames.)
+		// (A frame with temporal inputs left unshown: the next one's motion spans frames; generation history resets.)
 		if (dropped.frame != nullptr && !dropped.reuse && dropped.frame->fg.valid) FrameGen::NoteDroppedFrame();
 		// (A last frame shown again stays the last one.)
 		if (dropped.frame != nullptr) {

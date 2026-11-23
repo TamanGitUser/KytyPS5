@@ -921,10 +921,12 @@ void FsrDestroyFrameGeneration() {
 }
 
 // The frame generation context for render sizes up to `render` (made again for a larger one).
+// FSR's swapchain has a distinct compute queue on every supported layout. Use it by default so interpolation
+// does not serialize on the game's/present queue; KYTY_FSR_ASYNC=0 remains an explicit compatibility override.
 static bool FsrAsyncWorkloadsEnabled() {
 	static const bool enabled = [] {
 		const char* value = std::getenv("KYTY_FSR_ASYNC");
-		return value != nullptr && std::atoi(value) != 0;
+		return value == nullptr || value[0] == '\0' || std::atoi(value) != 0;
 	}();
 	return enabled;
 }
@@ -2341,7 +2343,7 @@ void NoteDroppedFrame() {
 #endif
 	static std::atomic<uint32_t> dropped {0};
 	if (const auto count = dropped.fetch_add(1, std::memory_order_relaxed) + 1; count <= 8 || count % 600 == 0)
-		LOGF("frame generation: %u frame(s) with inputs left unshown (the next resets DLSS-G's history)\n", count);
+		LOGF("frame generation: %u frame(s) with inputs left unshown (the next resets temporal history)\n", count);
 }
 
 uint32_t PresentedFrames() {
@@ -2637,10 +2639,14 @@ bool PresentEveryFrame() {
 	static const char* forced = std::getenv("KYTY_PRESENT_EVERY_FRAME");
 	if (forced != nullptr && *forced != '\0') return std::strcmp(forced, "0") != 0;
 #ifdef KYTY_FRAMEGEN_STREAMLINE
-	return g_upscale_ready && !g_ready;
-#else
-	return false;
+	if (g_upscale_ready && !g_ready) return true;
 #endif
+#ifdef KYTY_FRAMEGEN_FSR
+	// FSR frame interpolation needs consecutive source frames. Replacing a pending frame skips its frameID
+	// and resets the interpolation history, making otherwise generated motion uneven.
+	if (g_fsr) return true;
+#endif
+	return false;
 }
 
 bool Upscale(vk::CommandBuffer command, const UpscaleInputs& inputs, const vk::detail::DispatchLoaderDynamic& dispatch) {
