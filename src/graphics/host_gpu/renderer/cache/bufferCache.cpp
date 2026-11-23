@@ -506,7 +506,7 @@ std::shared_ptr<BufferCache::GuestReadback> BufferCache::BeginGuestReadback(
 		if (LiveTrace::WriteTicks())
 			LiveTrace::Event(LiveTrace::ReadbackTicks, address, size | request->tick << 32u);
 		m_guest_readbacks[slot] = request;
-		m_active_guest_readbacks |= 1u << slot;
+		m_active_guest_readbacks |= uint64_t {1} << slot;
 		LiveCounters::Add(LiveCounters::AsyncReadbacks);
 		return request;
 	}
@@ -524,7 +524,7 @@ std::shared_ptr<BufferCache::GuestReadback> BufferCache::BeginGuestReadback(
 	// Keep GPU ownership and page protection until the caller has copied every byte.
 	// Subsequent accesses to this window must retire this request before proceeding.
 	m_guest_readbacks[slot] = request;
-	m_active_guest_readbacks |= 1u << slot;
+	m_active_guest_readbacks |= uint64_t {1} << slot;
 	LiveCounters::Add(LiveCounters::AsyncReadbacks);
 	return request;
 }
@@ -789,7 +789,7 @@ void BufferCache::FinishGuestReadback(size_t slot, bool detach) {
 		// write keeps them so, and a reader faults again for the newer bytes.
 		LiveCounters::Add(LiveCounters::ReadbackDetaches);
 		m_guest_readbacks[slot].reset();
-		m_active_guest_readbacks &= ~(1u << slot);
+		m_active_guest_readbacks &= ~(uint64_t {1} << slot);
 		return;
 	}
 	if (!request->copied.load(std::memory_order_acquire)) {
@@ -812,7 +812,7 @@ void BufferCache::FinishGuestReadback(size_t slot, bool detach) {
 	for (const auto& page: request->pages)
 		m_memory_tracker.UnmarkRegionAsGpuModified(page.address, page.size);
 	m_guest_readbacks[slot].reset();
-	m_active_guest_readbacks &= ~(1u << slot);
+	m_active_guest_readbacks &= ~(uint64_t {1} << slot);
 }
 
 // All metadata and mapped reads belong to the GPU thread. A slot is reused only
